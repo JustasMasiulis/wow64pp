@@ -303,6 +303,55 @@ namespace wow64pp
                                     , "Could not get x64 module handle");
         }
 
+        inline std::uint64_t module_handle(const std::string& module_name, std::error_code& ec)
+        {
+            definitions::PEB_T<std::uint64_t> peb64;
+            {
+                const auto peb_addr = peb_address(ec);
+                if (ec)
+                    return 0;
+
+                read_memory(peb_addr, &peb64, sizeof(peb64), ec);
+
+                if (ec)
+                    return 0;
+            }
+
+            definitions::PEB_LDR_DATA_T<std::uint64_t> ldr;
+            read_memory(peb64.Ldr, &ldr, sizeof(ldr), ec);
+            if (ec)
+                return 0;
+
+            const auto last_entry = peb64.Ldr
+                + offsetof(definitions::PEB_LDR_DATA_T<std::uint64_t>, InLoadOrderModuleList);
+
+            definitions::LDR_DATA_TABLE_ENTRY_T<std::uint64_t> head;
+            head.InLoadOrderLinks.Flink = ldr.InLoadOrderModuleList.Flink;
+
+            do {
+                read_memory(head.InLoadOrderLinks.Flink, &head, sizeof(head), ec);
+                if (ec)
+                    continue;
+
+                auto other_module_name_len = head.BaseDllName.Length / sizeof(wchar_t);
+                if (other_module_name_len != module_name.length())
+                    continue;
+
+                std::wstring other_module_name;
+                other_module_name.resize(other_module_name_len);
+                read_memory(head.BaseDllName.Buffer, &other_module_name[0], head.BaseDllName.Length, ec);
+                if (ec)
+                    continue;
+
+                if (std::equal(begin(module_name), end(module_name), begin(other_module_name)))
+                    return head.DllBase;
+
+            } while (head.InLoadOrderLinks.Flink != last_entry);
+
+            if (!ec)
+                ec = std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category());
+        }
+
     }
 
 }
