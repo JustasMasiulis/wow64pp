@@ -7,7 +7,8 @@
 namespace wow64pp 
 {
 
-#include <Windows.h> // no global scope pollution
+// no global scope pollution
+#include <Windows.h> 
 #include <winternl.h>
 
     namespace detail
@@ -509,9 +510,10 @@ namespace wow64pp
             return 0;
         }
 
+
 #pragma warning(push)
 #pragma warning(disable : 4409) // illegal instruction size
-        inline std::error_code __cdecl call_functon(std::uint64_t func, int argC, ...)
+        inline std::error_code __cdecl call_function(std::uint64_t func, int argC, ...)
         {
             va_list args;
             va_start(args, argC);
@@ -614,6 +616,49 @@ namespace wow64pp
                 : std::error_code(RtlNtStatusToDosError(static_cast<NTSTATUS>(_rax.v)), std::system_category()));
         }
 #pragma warning(pop)
+
+
+        inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name)
+        {
+            const static auto ldr_procedure_address_base = ldr_procedure_address();
+
+            definitions::UNICODE_STRING_T<std::uint64_t> unicode_fun_name;
+            unicode_fun_name.Buffer = reinterpret_cast<uint64_t>(&procedure_name[0]);
+            unicode_fun_name.Length = static_cast<USHORT>(procedure_name.size());
+            unicode_fun_name.MaximumLength = unicode_fun_name.Length + 1;
+
+            std::uint64_t ret;
+            auto ec = call_function(ldr_procedure_address_base
+                     , 4
+                     , hmodule
+                     , reinterpret_cast<std::uint64_t>(&unicode_fun_name)
+                     , static_cast<std::uint64_t>(0)
+                     , reinterpret_cast<std::uint64_t>(&ret));
+            if (ec)
+                throw std::system_error(ec, "call_function(ldr_procedure_address_base...) failed");
+
+            return ret;
+        }
+
+        inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name, std::error_code& ec)
+        {
+            const static auto ldr_procedure_address_base = ldr_procedure_address();
+
+            definitions::UNICODE_STRING_T<std::uint64_t> unicode_fun_name;
+            unicode_fun_name.Buffer = reinterpret_cast<uint64_t>(&procedure_name[0]);
+            unicode_fun_name.Length = static_cast<USHORT>(procedure_name.size());
+            unicode_fun_name.MaximumLength = unicode_fun_name.Length + 1;
+
+            std::uint64_t ret;
+            ec = call_function(ldr_procedure_address_base
+                               , 4
+                               , hmodule
+                               , reinterpret_cast<std::uint64_t>(&unicode_fun_name)
+                               , static_cast<std::uint64_t>(0)
+                               , reinterpret_cast<std::uint64_t>(&ret));
+
+            return ret;
+        }
 
     }
 
