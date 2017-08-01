@@ -30,3 +30,5 @@
 *.exe
 *.out
 *.app
+/.vs/wow64pp/v15
+/.vs
