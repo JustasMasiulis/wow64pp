@@ -36,20 +36,100 @@ namespace wow64pp
 
     namespace definitions 
     {
+        // I add only what I need to these structures
 
         template<typename P>
         struct PROCESS_BASIC_INFORMATION_T
         {
         private:
             P Reserved1;
+
         public:
             P PebBaseAddress;
+
         private:
             P Reserved2[2];
-        public:
             P UniqueProcessId;
-        private:
             P Reserved3;
+        };
+
+
+        template <class P>
+        struct PEB_T
+        {
+        private:
+            BYTE Reserved1[2];
+            BYTE BeingDebugged;
+            BYTE Reserved2[1];
+            P    Reserved3[2];
+
+        public:
+            P    Ldr;
+        };
+
+
+        template<typename P>
+        struct LIST_ENTRY_T {
+            P Flink;
+            P Blink;
+        };
+
+
+        template <class P>
+        struct PEB_LDR_DATA_T
+        {
+            DWORD Length;
+            DWORD Initialized;
+            P SsHandle;
+            LIST_ENTRY_T<P> InLoadOrderModuleList;
+            LIST_ENTRY_T<P> InMemoryOrderModuleList;
+            LIST_ENTRY_T<P> InInitializationOrderModuleList;
+            P EntryInProgress;
+            DWORD ShutdownInProgress;
+            P ShutdownThreadId;
+        };
+
+
+        template <class P>
+        struct LDR_DATA_TABLE_ENTRY_T
+        {
+            LIST_ENTRY_T<P> InLoadOrderLinks;
+            LIST_ENTRY_T<P> InMemoryOrderLinks;
+            LIST_ENTRY_T<P> InInitializationOrderLinks;
+            P DllBase;
+            P EntryPoint;
+            union
+            {
+                DWORD SizeOfImage;
+                P dummy01;
+            };
+            UNICODE_STRING_T<P> FullDllName;
+            UNICODE_STRING_T<P> BaseDllName;
+            DWORD Flags;
+            WORD LoadCount;
+            WORD TlsIndex;
+            union
+            {
+                LIST_ENTRY_T<P> HashLinks;
+                struct
+                {
+                    P SectionPointer;
+                    P CheckSum;
+                };
+            };
+            union
+            {
+                P LoadedImports;
+                DWORD TimeDateStamp;
+            };
+            P EntryPointActivationContext;
+            P PatchInformation;
+            LIST_ENTRY_T<P> ForwarderLinks;
+            LIST_ENTRY_T<P> ServiceTagLinks;
+            LIST_ENTRY_T<P> StaticLinks;
+            P ContextInformation;
+            P OriginalBase;
+            _LARGE_INTEGER LoadTime;
         };
 
 
@@ -162,34 +242,66 @@ namespace wow64pp
         }
 
 
-        template<typename T>
-        void read_memory(std::uint64_t address, T& buffer, std::size_t size = sizeof(T))
+        template<typename P>
+        inline void read_memory(std::uint64_t address, P* buffer, std::size_t size = sizeof(P))
         {
             const auto NtWow64ReadVirtualMemory64
                 = native::ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
             if (ec)
                 return;
 
-            auto hres = NtWow64ReadVirtualMemory64(GetCurrentProcess(), address, std::addressof(buf), size, nullptr);
+            auto hres = NtWow64ReadVirtualMemory64(GetCurrentProcess(), address, buffer, size, nullptr);
             detail::throw_if_failed("NtWow64ReadVirtualMemory64() failed", hres);
         }
 
-        template<typename T>
-        void read_memory(std::uint64_t address, T& buffer, std::size_t size = sizeof(T), std::error_code& ec)
+        template<typename P>
+        inline void read_memory(std::uint64_t address, P* buffer, std::size_t size = sizeof(P), std::error_code& ec)
         {
             const auto NtWow64ReadVirtualMemory64 
-                = ntdll_function<winapi::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
+                = native::ntdll_function<winapi::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
             if (ec)
                 return;
 
-            auto hres = NtWow64ReadVirtualMemory64(_h, address, std::addressof(buf), size, nullptr);
-            if (winapi::failed(hres))
-                ec = get_last_error();
+            auto hres = NtWow64ReadVirtualMemory64(_h, address, buffer, size, nullptr);
+            if (FAILED(hres))
+                ec = detail::get_last_error();
 
             return;
         }
 
 
+        inline std::uint64_t module_handle(const std::string& module_name)
+        {
+            definitions::PEB_T<std::uint64_t> peb64;
+            read_memory(peb_address(), &peb64, sizeof(peb64));
+
+            definitions::PEB_LDR_DATA_T<std::uint64_t> ldr;
+            read_memory(peb64.Ldr, &ldr, sizeof(ldr));
+
+            const auto last_entry = peb64.Ldr
+                + offsetof(definitions::PEB_LDR_DATA_T<std::uint64_t>, InLoadOrderModuleList);
+
+            definitions::LDR_DATA_TABLE_ENTRY_T<std::uint64_t> head;
+            head.InLoadOrderLinks.Flink = ldr.InLoadOrderModuleList.Flink;
+
+            do {
+                read_memory(head.InLoadOrderLinks.Flink, &head, sizeof(head));
+
+                auto other_module_name_len = head.BaseDllName.Length / sizeof(wchar_t);
+                if (other_module_name_len != module_name.length())
+                    continue;
+
+                std::wstring other_module_name;
+                other_module_name.resize(other_module_name_len);
+                read_memory(head.BaseDllName.Buffer, &other_module_name[0], head.BaseDllName.Length);
+
+                if (std::equal(begin(module_name), end(module_name), begin(other_module_name)))
+                    return head.DllBase;
+            } while (head.InLoadOrderLinks.Flink != last_entry);
+
+            throw std::system_error(std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category())
+                                    , "Could not get x64 module handle");
+        }
 
     }
 
