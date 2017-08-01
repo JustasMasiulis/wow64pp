@@ -33,6 +33,7 @@ namespace wow64pp
 
     }
 
+
     namespace definitions 
     {
 
@@ -68,6 +69,7 @@ namespace wow64pp
             OUT PULONG64 NumberOfBytesRead);
 
     }
+
 
     namespace native 
     {
@@ -117,9 +119,10 @@ namespace wow64pp
 
             return f;
         }
+
     }
 
-    
+
     namespace x64 
     {
 
@@ -138,6 +141,55 @@ namespace wow64pp
 
             return pbi.PebBaseAddress;
         }
+
+        inline std::uint64_t peb_address(std::error_code& ec)
+        {
+            const auto NtWow64QueryInformationProcess64 
+                = native::ntdll_function<definitions::NtQueryInformationProcessT>("NtWow64QueryInformationProcess64", ec);
+            if (ec)
+                return 0;
+
+            definitions::PROCESS_BASIC_INFORMATION_T<std::uint64_t> pbi;
+            auto hres = NtWow64QueryInformationProcess64(GetCurrentProcess()
+                                                         , ProcessBasicInformation
+                                                         , &pbi
+                                                         , sizeof(pbi)
+                                                         , nullptr);
+            if (FAILED(hres))
+                ec = detail::get_last_error();
+
+            return pbi.PebBaseAddress;
+        }
+
+
+        template<typename T>
+        void read_memory(std::uint64_t address, T& buffer, std::size_t size = sizeof(T))
+        {
+            const auto NtWow64ReadVirtualMemory64
+                = native::ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
+            if (ec)
+                return;
+
+            auto hres = NtWow64ReadVirtualMemory64(GetCurrentProcess(), address, std::addressof(buf), size, nullptr);
+            detail::throw_if_failed("NtWow64ReadVirtualMemory64() failed", hres);
+        }
+
+        template<typename T>
+        void read_memory(std::uint64_t address, T& buffer, std::size_t size = sizeof(T), std::error_code& ec)
+        {
+            const auto NtWow64ReadVirtualMemory64 
+                = ntdll_function<winapi::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
+            if (ec)
+                return;
+
+            auto hres = NtWow64ReadVirtualMemory64(_h, address, std::addressof(buf), size, nullptr);
+            if (winapi::failed(hres))
+                ec = get_last_error();
+
+            return;
+        }
+
+
 
     }
 
