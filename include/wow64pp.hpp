@@ -2,6 +2,7 @@
 #define WOW64PP_HPP
 
 #include <system_error>
+#include <vector>
 
 namespace wow64pp 
 {
@@ -222,7 +223,7 @@ namespace wow64pp
             return pbi.PebBaseAddress;
         }
 
-        inline std::uint64_t peb_address(std::error_code& ec)
+        inline std::uint64_t peb_address(std::error_code& ec) noexcept
         {
             const auto NtWow64QueryInformationProcess64 
                 = native::ntdll_function<definitions::NtQueryInformationProcessT>("NtWow64QueryInformationProcess64", ec);
@@ -255,7 +256,7 @@ namespace wow64pp
         }
 
         template<typename P>
-        inline void read_memory(std::uint64_t address, P* buffer, std::size_t size = sizeof(P), std::error_code& ec)
+        inline void read_memory(std::uint64_t address, P* buffer, std::size_t size = sizeof(P), std::error_code& ec) noexcept
         {
             const auto NtWow64ReadVirtualMemory64 
                 = native::ntdll_function<winapi::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
@@ -350,6 +351,122 @@ namespace wow64pp
 
             if (!ec)
                 ec = std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category());
+        }
+
+
+        inline IMAGE_EXPORT_DIRECTORY image_export_dir(std::uint64_t ntdll_base)
+        {
+            IMAGE_DOS_HEADER idh;
+            read_memory(ntdll_base, &idh, sizeof(IMAGE_DOS_HEADER));
+
+            IMAGE_NT_HEADERS64 inh;
+            read_memory(ntdll_base + idh.e_lfanew, &inh, sizeof(IMAGE_NT_HEADERS64));
+
+            const auto idd = inh.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+            if (idd.VirtualAddress == 0)
+                throw std::runtime_error("IMAGE_EXPORT_DIRECTORY::VirtualAddress was 0");
+
+            IMAGE_EXPORT_DIRECTORY ied;
+            read_memory(ntdll_base + idd.VirtualAddress, &ied, sizeof(IMAGE_EXPORT_DIRECTORY));
+
+            return ied;
+        }
+
+        inline IMAGE_EXPORT_DIRECTORY image_export_dir(std::uint64_t ntdll_base, std::error_code& ec) noexcept
+        {
+            IMAGE_DOS_HEADER idh;
+            read_memory(ntdll_base, &idh, sizeof(IMAGE_DOS_HEADER), ec);
+            if (ec)
+                return {};
+
+            IMAGE_NT_HEADERS64 inh;
+            read_memory(ntdll_base + idh.e_lfanew, &inh, sizeof(IMAGE_NT_HEADERS64), ec);
+            if (ec)
+                return {};
+
+            const auto idd = inh.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
+
+            if (idd.VirtualAddress == 0) {
+                ec = std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category());
+                return {};
+            }
+                
+
+            IMAGE_EXPORT_DIRECTORY ied;
+            read_memory(ntdll_base + idd.VirtualAddress, &ied, sizeof(IMAGE_EXPORT_DIRECTORY), ec);
+
+            return ied;
+        }
+
+
+        inline std::uint64_t procedure_address()
+        {
+            const static auto ntdll_base = module_handle("ntdll.dll");
+
+            auto ied = image_export_dir(ntdll_base);
+
+            std::vector<DWORD> rva_table(ied.NumberOfFunctions);
+            read_memory(ntdll_base + ied.AddressOfFunctions, rva_table.data(), sizeof(DWORD) * ied.NumberOfFunctions);
+
+            std::vector<WORD> ord_table(ied.NumberOfFunctions);
+            read_memory(ntdll_base + ied.AddressOfNameOrdinals, ord_table.data(), sizeof(WORD) * ied.NumberOfFunctions);
+
+            std::vector<DWORD> name_table(ied.NumberOfNames);
+            read_memory(ntdll_base + ied.AddressOfNames, name_table.data(), sizeof(DWORD) * ied.NumberOfNames);
+
+            std::string buffer;
+            buffer.resize(sizeof("LdrGetProcedureAddress"));
+
+            for (std::size_t i = 0; i < ied.NumberOfFunctions; ++i) {
+                read_memory(ntdll_base + name_table[i], &buffer[0], buffer.size());
+
+                if (buffer == "LdrGetProcedureAddress")
+                    return ntdll_base + rva_table[ord_table[i]];
+            }
+
+            throw std::system_error(std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category())
+                            , "Could find x64 LdrGetProcedureAddress");
+        }
+
+        inline std::uint64_t procedure_address(std::error_code& ec)
+        {
+            const static auto ntdll_base = module_handle("ntdll.dll", ec);
+            if (ec)
+                return 0;
+
+            auto ied = image_export_dir(ntdll_base, ec);
+            if (ec)
+                return 0;
+
+            std::vector<DWORD> rva_table(ied.NumberOfFunctions);
+            read_memory(ntdll_base + ied.AddressOfFunctions, rva_table.data(), sizeof(DWORD) * ied.NumberOfFunctions, ec);
+            if (ec)
+                return 0;
+
+            std::vector<WORD> ord_table(ied.NumberOfFunctions);
+            read_memory(ntdll_base + ied.AddressOfNameOrdinals, ord_table.data(), sizeof(WORD) * ied.NumberOfFunctions, ec);
+            if (ec)
+                return 0;
+
+            std::vector<DWORD> name_table(ied.NumberOfNames);
+            read_memory(ntdll_base + ied.AddressOfNames, name_table.data(), sizeof(DWORD) * ied.NumberOfNames, ec);
+            if (ec)
+                return 0;
+
+            std::string buffer;
+            buffer.resize(sizeof("LdrGetProcedureAddress"));
+
+            for (std::size_t i = 0; i < ied.NumberOfFunctions; ++i) {
+                read_memory(ntdll_base + name_table[i], &buffer[0], buffer.size(), ec);
+                if (ec)
+                    continue;
+
+                if (buffer == "LdrGetProcedureAddress")
+                    return ntdll_base + rva_table[ord_table[i]];
+            }
+
+            ec = std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category());
+            return 0;
         }
 
     }
