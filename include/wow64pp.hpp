@@ -91,6 +91,14 @@ namespace wow64pp
         };
 
 
+        template<typename P>
+        struct UNICODE_STRING_T {
+            USHORT Length;
+            USHORT MaximumLength;
+            P  Buffer;
+        };
+
+
         template <class P>
         struct LDR_DATA_TABLE_ENTRY_T
         {
@@ -106,31 +114,6 @@ namespace wow64pp
             };
             UNICODE_STRING_T<P> FullDllName;
             UNICODE_STRING_T<P> BaseDllName;
-            DWORD Flags;
-            WORD LoadCount;
-            WORD TlsIndex;
-            union
-            {
-                LIST_ENTRY_T<P> HashLinks;
-                struct
-                {
-                    P SectionPointer;
-                    P CheckSum;
-                };
-            };
-            union
-            {
-                P LoadedImports;
-                DWORD TimeDateStamp;
-            };
-            P EntryPointActivationContext;
-            P PatchInformation;
-            LIST_ENTRY_T<P> ForwarderLinks;
-            LIST_ENTRY_T<P> ServiceTagLinks;
-            LIST_ENTRY_T<P> StaticLinks;
-            P ContextInformation;
-            P OriginalBase;
-            _LARGE_INTEGER LoadTime;
         };
 
 
@@ -148,6 +131,63 @@ namespace wow64pp
             OUT PVOID Buffer,
             IN ULONG64 Size,
             OUT PULONG64 NumberOfBytesRead);
+
+
+        using RtlNtStatusToDosErrorT = ULONG(WINAPI *)(NTSTATUS);
+
+
+        using RtlSetLastWin32ErrorT = ULONG(WINAPI *)(NTSTATUS);
+
+
+        enum registers
+        {
+            _RAX = 0,
+            _RCX = 1,
+            _RDX = 2,
+            _RBX = 3,
+            _RSP = 4,
+            _RBP = 5,
+            _RSI = 6,
+            _RDI = 7,
+            _R8 = 8,
+            _R9 = 9,
+            _R10 = 10,
+            _R11 = 11,
+            _R12 = 12,
+            _R13 = 13,
+            _R14 = 14,
+            _R15 = 15
+        };
+
+
+        union reg64 
+        {
+            DWORD64 v;
+            DWORD   dw[2];
+        };
+
+
+#define EMIT(a) __asm __emit (a)
+
+#define X64_Start_with_CS(_cs) \
+    { \
+    EMIT(0x6A) EMIT(_cs)                         /*  push   _cs             */ \
+    EMIT(0xE8) EMIT(0) EMIT(0) EMIT(0) EMIT(0)   /*  call   $+5             */ \
+    EMIT(0x83) EMIT(4) EMIT(0x24) EMIT(5)        /*  add    dword [esp], 5  */ \
+    EMIT(0xCB)                                   /*  retf                   */ \
+    }
+
+#define X64_End_with_CS(_cs) \
+    { \
+    EMIT(0xE8) EMIT(0) EMIT(0) EMIT(0) EMIT(0)                                 /*  call   $+5                   */ \
+    EMIT(0xC7) EMIT(0x44) EMIT(0x24) EMIT(4) EMIT(_cs) EMIT(0) EMIT(0) EMIT(0) /*  mov    dword [rsp + 4], _cs  */ \
+    EMIT(0x83) EMIT(4) EMIT(0x24) EMIT(0xD)                                    /*  add    dword [rsp], 0xD      */ \
+    EMIT(0xCB)                                                                 /*  retf                         */ \
+    }
+
+#define X64_Pop(r) EMIT(0x48 | ((r) >> 3)) EMIT(0x58 | ((r) & 7))
+
+#define REX_W EMIT(0x48) __asm
 
     }
 
@@ -399,7 +439,7 @@ namespace wow64pp
         }
 
 
-        inline std::uint64_t procedure_address()
+        inline std::uint64_t ldr_procedure_address()
         {
             const static auto ntdll_base = module_handle("ntdll.dll");
 
@@ -428,7 +468,7 @@ namespace wow64pp
                             , "Could find x64 LdrGetProcedureAddress");
         }
 
-        inline std::uint64_t procedure_address(std::error_code& ec)
+        inline std::uint64_t ldr_procedure_address(std::error_code& ec)
         {
             const static auto ntdll_base = module_handle("ntdll.dll", ec);
             if (ec)
@@ -468,6 +508,112 @@ namespace wow64pp
             ec = std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category());
             return 0;
         }
+
+#pragma warning(push)
+#pragma warning(disable : 4409) // illegal instruction size
+        inline std::error_code __cdecl call_functon(std::uint64_t func, int argC, ...)
+        {
+            va_list args;
+            va_start(args, argC);
+            definitions::reg64 _rcx = { (argC > 0) ? argC-- , va_arg(args, std::uint64_t) : 0 };
+            definitions::reg64 _rdx = { (argC > 0) ? argC-- , va_arg(args, std::uint64_t) : 0 };
+            definitions::reg64 _r8 = { (argC > 0) ? argC-- , va_arg(args, std::uint64_t) : 0 };
+            definitions::reg64 _r9 = { (argC > 0) ? argC-- , va_arg(args, std::uint64_t) : 0 };
+            definitions::reg64 _rax = { 0 };
+
+            definitions::reg64 restArgs = { reinterpret_cast<uint64_t>(&va_arg(args, std::uint64_t)) };
+
+            // conversion to QWORD for easier use in inline assembly
+            definitions::reg64 _argC = { static_cast<uint64_t>(argC) };
+            DWORD back_esp = 0;
+            WORD back_fs = 0;
+
+            __asm
+            {
+                ;// reset FS segment, to properly handle RFG
+                mov back_fs, fs
+                    mov eax, 0x2B
+                    mov fs, ax
+
+                    ;// keep original esp in back_esp variable
+                mov back_esp, esp
+
+                    ;// align esp to 0x10, without aligned stack some syscalls may return errors !
+                ;// (actually, for syscalls it is sufficient to align to 8, but SSE opcodes 
+                ;// requires 0x10 alignment), it will be further adjusted according to the
+                ;// number of arguments above 4
+                and esp, 0xFFFFFFF0
+
+                    X64_Start_with_CS(0x33)
+
+                ;// below code is compiled as x86 inline asm, but it is executed as x64 code
+                ;// that's why it need sometimes REX_W() macro, right column contains detailed
+                ;// transcription how it will be interpreted by CPU
+
+                ;// fill first four arguments
+                REX_W mov ecx, _rcx.dw[0];// mov     rcx, qword ptr [_rcx]
+                REX_W mov edx, _rdx.dw[0];// mov     rdx, qword ptr [_rdx]
+                push _r8.v;// push    qword ptr [_r8]
+                X64_Pop(_R8); ;// pop     r8
+                push _r9.v;// push    qword ptr [_r9]
+                X64_Pop(_R9); ;// pop     r9
+                ;//
+                REX_W mov eax, _argC.dw[0];// mov     rax, qword ptr [_argC]
+                ;// 
+                ;// final stack adjustment, according to the    ;//
+                ;// number of arguments above 4                 ;// 
+                test al, 1;// test    al, 1
+                jnz _no_adjust;// jnz     _no_adjust
+                sub esp, 8;// sub     rsp, 8
+            _no_adjust:;//
+                ;// 
+                push edi;// push    rdi
+                REX_W mov edi, restArgs.dw[0];// mov     rdi, qword ptr [restArgs]
+                ;// 
+                ;// put rest of arguments on the stack          ;// 
+                REX_W test eax, eax;// test    rax, rax
+                jz _ls_e;// je      _ls_e
+                REX_W lea edi, dword ptr[edi + 8 * eax - 8];// lea     rdi, [rdi + rax*8 - 8]
+                ;// 
+            _ls:;// 
+                REX_W test eax, eax;// test    rax, rax
+                jz _ls_e;// je      _ls_e
+                push dword ptr[edi];// push    qword ptr [rdi]
+                REX_W sub edi, 8;// sub     rdi, 8
+                REX_W sub eax, 1;// sub     rax, 1
+                jmp _ls;// jmp     _ls
+            _ls_e:;// 
+                ;// 
+                ;// create stack space for spilling registers   ;// 
+                REX_W sub esp, 0x20;// sub     rsp, 20h
+                ;// 
+                call func;// call    qword ptr [func]
+                ;// 
+                ;// cleanup stack                               ;// 
+                REX_W mov ecx, _argC.dw[0];// mov     rcx, qword ptr [_argC]
+                REX_W lea esp, dword ptr[esp + 8 * ecx + 0x20];// lea     rsp, [rsp + rcx*8 + 20h]
+                ;// 
+                pop edi;// pop     rdi
+                ;// 
+                 // set return value                             ;// 
+                REX_W mov _rax.dw[0], eax;// mov     qword ptr [_rax], rax
+
+                X64_End_with_CS(0x23)
+
+                mov ax, ds
+                    mov ss, ax
+                    mov esp, back_esp
+
+                    ;// restore FS segment
+                mov ax, back_fs
+                    mov fs, ax
+            }
+
+            return (_rax.v == 0
+                ? std::error_code()
+                : std::error_code(RtlNtStatusToDosError(static_cast<NTSTATUS>(_rax.v)), std::system_category()));
+        }
+#pragma warning(pop)
 
     }
 
