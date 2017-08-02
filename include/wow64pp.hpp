@@ -3,6 +3,7 @@
 
 #include <system_error>
 #include <vector>
+#include <tuple>
 
 namespace wow64pp 
 {
@@ -32,6 +33,74 @@ namespace wow64pp
                 throw std::system_error(std::error_code(static_cast<int>(hr), std::system_category())
                                          , message);
         }
+
+        inline HANDLE self_handle()
+        {
+            static HANDLE h = INVALID_HANDLE_VALUE;
+
+            if (DuplicateHandle(GetCurrentProcess()
+                , GetCurrentProcess()
+                , GetCurrentProcess()
+                , &h
+                , 0
+                , FALSE
+                , DUPLICATE_SAME_ACCESS) == 0)
+                throw_last_error("failed to duplicate current process handle");
+
+            return h;
+        }
+
+        inline HANDLE self_handle(std::error_code& ec) noexcept
+        {
+            static HANDLE h = INVALID_HANDLE_VALUE;
+
+            if (DuplicateHandle(GetCurrentProcess()
+                , GetCurrentProcess()
+                , GetCurrentProcess()
+                , &h
+                , 0
+                , FALSE
+                , DUPLICATE_SAME_ACCESS) == 0)
+                ec = get_last_error();
+
+            return h;
+        }
+
+
+        template<std::size_t Idx, bool OOB, typename T> 
+        struct get_or_0_impl_t
+        {
+            constexpr decltype(auto) operator()(const T& tuple)
+            {
+                return std::get<Idx>(tuple);
+            }
+        };
+
+        template<std::size_t Idx, typename T>
+        struct get_or_0_impl_t<Idx, true, T>
+        {
+            constexpr std::uint64_t operator()(const T& tuple)
+            {
+                return 0;
+            }
+        };
+
+        template<std::size_t Idx, std::size_t Size, typename T>
+        decltype(auto) get_or_0(T& tuple)
+        {
+            return get_or_0_impl_t<Idx, Idx >= Size, T>{}(tuple);
+        }
+
+        template<std::size_t Size>
+        struct get_or_0_t
+        {
+            template<std::size_t Idx, typename T>
+            constexpr decltype(auto) operator()(const T& tuple)
+            {
+                return get_or_0<Idx, Size>(tuple);
+            }
+        };
+
 
     }
 
@@ -140,25 +209,7 @@ namespace wow64pp
         using RtlSetLastWin32ErrorT = ULONG(WINAPI *)(NTSTATUS);
 
 
-        enum registers
-        {
-            _RAX = 0,
-            _RCX = 1,
-            _RDX = 2,
-            _RBX = 3,
-            _RSP = 4,
-            _RBP = 5,
-            _RSI = 6,
-            _RDI = 7,
-            _R8 = 8,
-            _R9 = 9,
-            _R10 = 10,
-            _R11 = 11,
-            _R12 = 12,
-            _R13 = 13,
-            _R14 = 14,
-            _R15 = 15
-        };
+        
 
 
         union reg64 
@@ -248,6 +299,27 @@ namespace wow64pp
     namespace x64 
     {
 
+        enum registers
+        {
+            _RAX = 0,
+            _RCX = 1,
+            _RDX = 2,
+            _RBX = 3,
+            _RSP = 4,
+            _RBP = 5,
+            _RSI = 6,
+            _RDI = 7,
+            _R8 = 8,
+            _R9 = 9,
+            _R10 = 10,
+            _R11 = 11,
+            _R12 = 12,
+            _R13 = 13,
+            _R14 = 14,
+            _R15 = 15
+        };
+
+
         inline std::uint64_t peb_address()
         {
             const static auto NtWow64QueryInformationProcess64
@@ -287,24 +359,28 @@ namespace wow64pp
         template<typename P>
         inline void read_memory(std::uint64_t address, P* buffer, std::size_t size = sizeof(P))
         {
-            const auto NtWow64ReadVirtualMemory64
-                = native::ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
-            if (ec)
-                return;
+            const static auto NtWow64ReadVirtualMemory64
+                = native::ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64");
 
-            auto hres = NtWow64ReadVirtualMemory64(GetCurrentProcess(), address, buffer, size, nullptr);
+            HANDLE self_handle = detail::self_handle();
+            auto hres = NtWow64ReadVirtualMemory64(self_handle, address, buffer, size, nullptr);
+            CloseHandle(self_handle);
             detail::throw_if_failed("NtWow64ReadVirtualMemory64() failed", hres);
         }
 
         template<typename P>
-        inline void read_memory(std::uint64_t address, P* buffer, std::size_t size = sizeof(P), std::error_code& ec) noexcept
+        inline void read_memory(std::uint64_t address, P* buffer, std::size_t size, std::error_code& ec) noexcept
         {
             const auto NtWow64ReadVirtualMemory64 
-                = native::ntdll_function<winapi::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
+                = native::ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
             if (ec)
                 return;
 
-            auto hres = NtWow64ReadVirtualMemory64(_h, address, buffer, size, nullptr);
+            HANDLE self_handle = detail::self_handle(ec);
+            if (ec)
+                return;
+            auto hres = NtWow64ReadVirtualMemory64(self_handle, address, buffer, size, nullptr);
+            CloseHandle(self_handle);
             if (FAILED(hres))
                 ec = detail::get_last_error();
 
@@ -455,13 +531,14 @@ namespace wow64pp
             std::vector<DWORD> name_table(ied.NumberOfNames);
             read_memory(ntdll_base + ied.AddressOfNames, name_table.data(), sizeof(DWORD) * ied.NumberOfNames);
 
-            std::string buffer;
-            buffer.resize(sizeof("LdrGetProcedureAddress"));
+            const std::string to_find("LdrGetProcedureAddress");
+            std::string buffer = to_find;
 
-            for (std::size_t i = 0; i < ied.NumberOfFunctions; ++i) {
+            const std::size_t n = min(ied.NumberOfFunctions, ied.NumberOfNames);
+            for (std::size_t i = 0; i < n; ++i) {
                 read_memory(ntdll_base + name_table[i], &buffer[0], buffer.size());
 
-                if (buffer == "LdrGetProcedureAddress")
+                if (buffer == to_find)
                     return ntdll_base + rva_table[ord_table[i]];
             }
 
@@ -494,15 +571,16 @@ namespace wow64pp
             if (ec)
                 return 0;
 
-            std::string buffer;
-            buffer.resize(sizeof("LdrGetProcedureAddress"));
+            const std::string to_find("LdrGetProcedureAddress");
+            std::string buffer = to_find;
 
-            for (std::size_t i = 0; i < ied.NumberOfFunctions; ++i) {
+            const std::size_t n = min(ied.NumberOfFunctions, ied.NumberOfNames);
+            for (std::size_t i = 0; i < n; ++i) {
                 read_memory(ntdll_base + name_table[i], &buffer[0], buffer.size(), ec);
                 if (ec)
                     continue;
 
-                if (buffer == "LdrGetProcedureAddress")
+                if (buffer == to_find)
                     return ntdll_base + rva_table[ord_table[i]];
             }
 
@@ -513,20 +591,22 @@ namespace wow64pp
 
 #pragma warning(push)
 #pragma warning(disable : 4409) // illegal instruction size
-        inline std::error_code __cdecl call_function(std::uint64_t func, int argC, ...)
+        template<typename... Args>
+        inline std::error_code __cdecl call_function(std::uint64_t func, Args&&... args)
         {
-            va_list args;
-            va_start(args, argC);
-            definitions::reg64 _rcx = { (argC > 0) ? argC-- , va_arg(args, std::uint64_t) : 0 };
-            definitions::reg64 _rdx = { (argC > 0) ? argC-- , va_arg(args, std::uint64_t) : 0 };
-            definitions::reg64 _r8 = { (argC > 0) ? argC-- , va_arg(args, std::uint64_t) : 0 };
-            definitions::reg64 _r9 = { (argC > 0) ? argC-- , va_arg(args, std::uint64_t) : 0 };
+            auto tup_elements = std::forward_as_tuple(reinterpret_cast<std::uint64_t>(args)...);
+            constexpr std::size_t argc = sizeof... (args);
+
+            definitions::reg64 _rcx = reinterpret_cast<std::uint64_t>(detail::get_or_0<0, argc>(tup_elements));
+            definitions::reg64 _rdx = reinterpret_cast<std::uint64_t>(detail::get_or_0<1, argc>(tup_elements));
+            definitions::reg64 _r8 = reinterpret_cast<std::uint64_t>(detail::get_or_0<2, argc>(tup_elements));
+            definitions::reg64 _r9 = reinterpret_cast<std::uint64_t>(detail::get_or_0<3, argc>(tup_elements));
             definitions::reg64 _rax = { 0 };
 
-            definitions::reg64 restArgs = { reinterpret_cast<uint64_t>(&va_arg(args, std::uint64_t)) };
+            definitions::reg64 restArgs = reinterpret_cast<std::uint64_t>(&detail::get_or_0<4, argc>(tup_elements));
 
             // conversion to QWORD for easier use in inline assembly
-            definitions::reg64 _argC = { static_cast<uint64_t>(argC) };
+            definitions::reg64 _argC = { static_cast<uint64_t>(argc) };
             DWORD back_esp = 0;
             WORD back_fs = 0;
 
@@ -546,7 +626,7 @@ namespace wow64pp
                 ;// number of arguments above 4
                 and esp, 0xFFFFFFF0
 
-                    X64_Start_with_CS(0x33)
+                    X64_Start_with_CS(0x33);
 
                 ;// below code is compiled as x86 inline asm, but it is executed as x64 code
                 ;// that's why it need sometimes REX_W() macro, right column contains detailed
@@ -600,7 +680,7 @@ namespace wow64pp
                  // set return value                             ;// 
                 REX_W mov _rax.dw[0], eax;// mov     qword ptr [_rax], rax
 
-                X64_End_with_CS(0x23)
+                X64_End_with_CS(0x23);
 
                 mov ax, ds
                     mov ss, ax
@@ -623,7 +703,7 @@ namespace wow64pp
             const static auto ldr_procedure_address_base = ldr_procedure_address();
 
             definitions::UNICODE_STRING_T<std::uint64_t> unicode_fun_name;
-            unicode_fun_name.Buffer = reinterpret_cast<uint64_t>(&procedure_name[0]);
+            unicode_fun_name.Buffer = reinterpret_cast<std::uint64_t>(&procedure_name[0]);
             unicode_fun_name.Length = static_cast<USHORT>(procedure_name.size());
             unicode_fun_name.MaximumLength = unicode_fun_name.Length + 1;
 
@@ -645,7 +725,7 @@ namespace wow64pp
             const static auto ldr_procedure_address_base = ldr_procedure_address();
 
             definitions::UNICODE_STRING_T<std::uint64_t> unicode_fun_name;
-            unicode_fun_name.Buffer = reinterpret_cast<uint64_t>(&procedure_name[0]);
+            unicode_fun_name.Buffer = reinterpret_cast<std::uint64_t>(&procedure_name[0]);
             unicode_fun_name.Length = static_cast<USHORT>(procedure_name.size());
             unicode_fun_name.MaximumLength = unicode_fun_name.Length + 1;
 
