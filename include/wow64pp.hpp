@@ -354,6 +354,7 @@ namespace wow64pp
 
     }
 
+
     inline std::uint64_t module_handle(const std::string& module_name)
     {
         const auto ldr_base = detail::read_memory<definitions::PEB_T<std::uint64_t>>(detail::peb_address()).Ldr;
@@ -427,6 +428,7 @@ namespace wow64pp
         if (!ec)
             ec = std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category());
     }
+
 
     namespace detail
     {
@@ -539,6 +541,7 @@ namespace wow64pp
         }
 
     }
+
 
         // taken from https://github.com/rwfpl/rewolf-wow64ext
 #pragma warning(push)
@@ -653,6 +656,7 @@ namespace wow64pp
         return (_rax.v != 0 ? std::error_code(static_cast<int>(_rax.v), std::system_category()) : std::error_code{});
     }
 #pragma warning(pop)
+
 
     inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name)
     {
