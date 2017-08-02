@@ -1,3 +1,6 @@
+
+
+
 #ifndef WOW64PP_HPP
 #define WOW64PP_HPP
 
@@ -8,90 +11,8 @@
 namespace wow64pp
 {
 
-    // no global scope pollution
 #include <Windows.h>
 #include <winternl.h>
-
-    namespace detail
-    {
-
-        inline std::error_code get_last_error() noexcept
-        {
-            return std::error_code(static_cast<int>(GetLastError()), std::system_category());
-        }
-
-
-        inline void throw_last_error(const char* message)
-        {
-            throw std::system_error(get_last_error(), message);
-        }
-
-
-        inline void throw_if_failed(const char* message, HRESULT hr)
-        {
-            if (FAILED(hr))
-                throw std::system_error(std::error_code(static_cast<int>(hr), std::system_category())
-                                        , message);
-        }
-
-        inline HANDLE self_handle()
-        {
-            static HANDLE h = INVALID_HANDLE_VALUE;
-
-            if (DuplicateHandle(GetCurrentProcess()
-                , GetCurrentProcess()
-                , GetCurrentProcess()
-                , &h
-                , 0
-                , FALSE
-                , DUPLICATE_SAME_ACCESS) == 0)
-                throw_last_error("failed to duplicate current process handle");
-
-            return h;
-        }
-
-        inline HANDLE self_handle(std::error_code& ec) noexcept
-        {
-            static HANDLE h = INVALID_HANDLE_VALUE;
-
-            if (DuplicateHandle(GetCurrentProcess()
-                , GetCurrentProcess()
-                , GetCurrentProcess()
-                , &h
-                , 0
-                , FALSE
-                , DUPLICATE_SAME_ACCESS) == 0)
-                ec = get_last_error();
-
-            return h;
-        }
-
-
-        template<std::size_t Idx, bool OOB, typename T>
-        struct get_or_0_impl_t
-        {
-            constexpr auto& operator()(const T& tuple)
-            {
-                return std::get<Idx>(tuple);
-            }
-        };
-
-        template<std::size_t Idx, typename T>
-        struct get_or_0_impl_t<Idx, true, T>
-        {
-            constexpr std::uint64_t operator()(const T& tuple)
-            {
-                return 0;
-            }
-        };
-
-        template<std::size_t Idx, std::size_t Size, typename T>
-        decltype(auto) get_or_0(T& tuple)
-        {
-            return get_or_0_impl_t<Idx, Idx >= Size, T>{}(tuple);
-        }
-
-    }
 
 
     namespace definitions
@@ -208,35 +129,96 @@ namespace wow64pp
         };
 
 
-#define EMIT(a) __asm __emit (a)
+#define WOW64PP_EMIT(a) __asm __emit (a)
 
-#define X64_Start_with_CS(_cs) \
-    { \
-    EMIT(0x6A) EMIT(_cs)                         /*  push   _cs             */ \
-    EMIT(0xE8) EMIT(0) EMIT(0) EMIT(0) EMIT(0)   /*  call   $+5             */ \
-    EMIT(0x83) EMIT(4) EMIT(0x24) EMIT(5)        /*  add    dword [esp], 5  */ \
-    EMIT(0xCB)                                   /*  retf                   */ \
-    }
+#define WOW64PP_X64_POP(r) WOW64PP_EMIT(0x48 | ((r) >> 3)) WOW64PP_EMIT(0x58 | ((r) & 7))
 
-#define X64_End_with_CS(_cs) \
-    { \
-    EMIT(0xE8) EMIT(0) EMIT(0) EMIT(0) EMIT(0)                                 /*  call   $+5                   */ \
-    EMIT(0xC7) EMIT(0x44) EMIT(0x24) EMIT(4) EMIT(_cs) EMIT(0) EMIT(0) EMIT(0) /*  mov    dword [rsp + 4], _cs  */ \
-    EMIT(0x83) EMIT(4) EMIT(0x24) EMIT(0xD)                                    /*  add    dword [rsp], 0xD      */ \
-    EMIT(0xCB)                                                                 /*  retf                         */ \
-    }
-
-#define X64_Pop(r) EMIT(0x48 | ((r) >> 3)) EMIT(0x58 | ((r) & 7))
-
-#define REX_W EMIT(0x48) __asm
+#define WOW64PP_REX_W WOW64PP_EMIT(0x48) __asm
 
     }
 
 
-    namespace native
+    namespace detail
     {
 
-        inline HMODULE module_address(const char* name)
+        inline std::error_code get_last_error() noexcept
+        {
+            return std::error_code(static_cast<int>(GetLastError()), std::system_category());
+        }
+
+
+        inline void throw_last_error(const char* message)
+        {
+            throw std::system_error(get_last_error(), message);
+        }
+
+
+        inline void throw_if_failed(const char* message, HRESULT hr)
+        {
+            if (FAILED(hr))
+                throw std::system_error(std::error_code(static_cast<int>(hr), std::system_category())
+                                        , message);
+        }
+
+        inline HANDLE self_handle()
+        {
+            static HANDLE h = INVALID_HANDLE_VALUE;
+
+            if (DuplicateHandle(GetCurrentProcess()
+                , GetCurrentProcess()
+                , GetCurrentProcess()
+                , &h
+                , 0
+                , FALSE
+                , DUPLICATE_SAME_ACCESS) == 0)
+                throw_last_error("failed to duplicate current process handle");
+
+            return h;
+        }
+
+        inline HANDLE self_handle(std::error_code& ec) noexcept
+        {
+            static HANDLE h = INVALID_HANDLE_VALUE;
+
+            if (DuplicateHandle(GetCurrentProcess()
+                , GetCurrentProcess()
+                , GetCurrentProcess()
+                , &h
+                , 0
+                , FALSE
+                , DUPLICATE_SAME_ACCESS) == 0)
+                ec = get_last_error();
+
+            return h;
+        }
+
+
+        template<std::size_t Idx, bool OOB, typename T>
+        struct get_or_0_impl_t
+        {
+            constexpr std::uint64_t operator()(const T& tuple)
+            {
+                return std::get<Idx>(tuple);
+            }
+        };
+
+        template<std::size_t Idx, typename T>
+        struct get_or_0_impl_t<Idx, true, T>
+        {
+            constexpr std::uint64_t operator()(const T& tuple)
+            {
+                return 0;
+            }
+        };
+
+        template<std::size_t Idx, std::size_t Size, typename T>
+        decltype(auto) get_or_0(T& tuple)
+        {
+            return get_or_0_impl_t<Idx, Idx >= Size, T>{}(tuple);
+        }
+
+
+        inline HMODULE native_module_handle(const char* name)
         {
             const auto addr = GetModuleHandleA(name);
             if (addr == nullptr)
@@ -245,7 +227,7 @@ namespace wow64pp
             return addr;
         }
 
-        inline HMODULE module_address(const char* name, std::error_code& ec) noexcept
+        inline HMODULE native_module_handle(const char* name, std::error_code& ec) noexcept
         {
             const auto addr = GetModuleHandleA(name);
             if (addr == nullptr)
@@ -256,9 +238,9 @@ namespace wow64pp
 
 
         template <typename F>
-        inline F ntdll_function(const char* name)
+        inline F native_ntdll_function(const char* name)
         {
-            const static auto ntdll_addr = module_address("ntdll.dll");
+            const static auto ntdll_addr = native_module_handle("ntdll.dll");
             auto f = reinterpret_cast<F>(GetProcAddress(ntdll_addr, name));
 
             if (f == nullptr)
@@ -268,9 +250,9 @@ namespace wow64pp
         }
 
         template <typename F>
-        inline F ntdll_function(const char* name, std::error_code& ec) noexcept
+        inline F native_ntdll_function(const char* name, std::error_code& ec) noexcept
         {
-            const auto ntdll_addr = module_address("ntdll.dll", ec);
+            const auto ntdll_addr = native_module_handle("ntdll.dll", ec);
             if (ec)
                 return nullptr;
 
@@ -282,37 +264,10 @@ namespace wow64pp
             return f;
         }
 
-    }
-
-
-    namespace x64
-    {
-
-        enum registers
-        {
-            _RAX = 0,
-            _RCX = 1,
-            _RDX = 2,
-            _RBX = 3,
-            _RSP = 4,
-            _RBP = 5,
-            _RSI = 6,
-            _RDI = 7,
-            _R8 = 8,
-            _R9 = 9,
-            _R10 = 10,
-            _R11 = 11,
-            _R12 = 12,
-            _R13 = 13,
-            _R14 = 14,
-            _R15 = 15
-        };
-
-
         inline std::uint64_t peb_address()
         {
             const static auto NtWow64QueryInformationProcess64
-                = native::ntdll_function<definitions::NtQueryInformationProcessT>("NtWow64QueryInformationProcess64");
+                = native_ntdll_function<definitions::NtQueryInformationProcessT>("NtWow64QueryInformationProcess64");
 
             definitions::PROCESS_BASIC_INFORMATION_T<std::uint64_t> pbi;
             auto hres = NtWow64QueryInformationProcess64(GetCurrentProcess()
@@ -328,7 +283,7 @@ namespace wow64pp
         inline std::uint64_t peb_address(std::error_code& ec) noexcept
         {
             const auto NtWow64QueryInformationProcess64
-                = native::ntdll_function<definitions::NtQueryInformationProcessT>("NtWow64QueryInformationProcess64", ec);
+                = native_ntdll_function<definitions::NtQueryInformationProcessT>("NtWow64QueryInformationProcess64", ec);
             if (ec)
                 return 0;
 
@@ -349,29 +304,29 @@ namespace wow64pp
         inline void read_memory(std::uint64_t address, P* buffer, std::size_t size = sizeof(P))
         {
             const static auto NtWow64ReadVirtualMemory64
-                = native::ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64");
+                = native_ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64");
 
-            HANDLE self_handle = detail::self_handle();
-            auto hres = NtWow64ReadVirtualMemory64(self_handle, address, buffer, size, nullptr);
-            CloseHandle(self_handle);
-            detail::throw_if_failed("NtWow64ReadVirtualMemory64() failed", hres);
+            HANDLE h_self = self_handle();
+            auto hres = NtWow64ReadVirtualMemory64(h_self, address, buffer, size, nullptr);
+            CloseHandle(h_self);
+            throw_if_failed("NtWow64ReadVirtualMemory64() failed", hres);
         }
 
         template<typename P>
         inline void read_memory(std::uint64_t address, P* buffer, std::size_t size, std::error_code& ec) noexcept
         {
             const auto NtWow64ReadVirtualMemory64
-                = native::ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
+                = native_ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
             if (ec)
                 return;
 
-            HANDLE self_handle = detail::self_handle(ec);
+            HANDLE h_self = self_handle(ec);
             if (ec)
                 return;
-            auto hres = NtWow64ReadVirtualMemory64(self_handle, address, buffer, size, nullptr);
-            CloseHandle(self_handle);
+            auto hres = NtWow64ReadVirtualMemory64(h_self, address, buffer, size, nullptr);
+            CloseHandle(h_self);
             if (FAILED(hres))
-                ec = detail::get_last_error();
+                ec = get_last_error();
 
             return;
         }
@@ -388,87 +343,93 @@ namespace wow64pp
         template<typename T>
         inline T read_memory(std::uint64_t address, std::error_code& ec) noexcept
         {
-            if (ec)
-                return T{ 0 };
-
             T buffer;
+            memset(&buffer, 0, sizeof(T));
+            if (ec)
+                return buffer;
+
             read_memory(address, &buffer, sizeof(T), ec);
             return buffer;
         }
 
+    }
 
-        inline std::uint64_t module_handle(const std::string& module_name)
-        {
-            const auto ldr_base = read_memory<definitions::PEB_T<std::uint64_t>>(peb_address()).Ldr;
+    inline std::uint64_t module_handle(const std::string& module_name)
+    {
+        const auto ldr_base = detail::read_memory<definitions::PEB_T<std::uint64_t>>(detail::peb_address()).Ldr;
 
-            const auto last_entry = ldr_base
-                + offsetof(definitions::PEB_LDR_DATA_T<std::uint64_t>, InLoadOrderModuleList);
+        const auto last_entry = ldr_base
+            + offsetof(definitions::PEB_LDR_DATA_T<std::uint64_t>, InLoadOrderModuleList);
 
-            definitions::LDR_DATA_TABLE_ENTRY_T<std::uint64_t> head;
-            head.InLoadOrderLinks.Flink = read_memory<definitions::PEB_LDR_DATA_T<std::uint64_t>>(ldr_base).InLoadOrderModuleList.Flink;
+        definitions::LDR_DATA_TABLE_ENTRY_T<std::uint64_t> head;
+        head.InLoadOrderLinks.Flink = detail::read_memory<definitions::PEB_LDR_DATA_T<std::uint64_t>>(ldr_base)
+            .InLoadOrderModuleList.Flink;
 
-            do {
-                try 
-                {
-                    read_memory(head.InLoadOrderLinks.Flink, &head);
-                }
-                catch (std::system_error)
-                {
-                    continue;
-                }
+        do {
+            try
+            {
+                detail::read_memory(head.InLoadOrderLinks.Flink, &head);
+            }
+            catch (std::system_error)
+            {
+                continue;
+            }
 
-                const auto other_module_name_len = head.BaseDllName.Length / sizeof(wchar_t);
-                if (other_module_name_len != module_name.length())
-                    continue;
+            const auto other_module_name_len = head.BaseDllName.Length / sizeof(wchar_t);
+            if (other_module_name_len != module_name.length())
+                continue;
 
-                std::vector<wchar_t> other_module_name(other_module_name_len);
-                read_memory(head.BaseDllName.Buffer, other_module_name.data(), head.BaseDllName.Length);
+            std::vector<wchar_t> other_module_name(other_module_name_len);
+            detail::read_memory(head.BaseDllName.Buffer, other_module_name.data(), head.BaseDllName.Length);
 
-                if (std::equal(begin(module_name), end(module_name), begin(other_module_name)))
-                    return head.DllBase;
-            } while (head.InLoadOrderLinks.Flink != last_entry);
+            if (std::equal(begin(module_name), end(module_name), begin(other_module_name)))
+                return head.DllBase;
+        } while (head.InLoadOrderLinks.Flink != last_entry);
 
-            throw std::system_error(std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category())
-                                    , "Could not get x64 module handle");
-        }
+        throw std::system_error(std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category())
+                                , "Could not get x64 module handle");
+    }
 
-        inline std::uint64_t module_handle(const std::string& module_name, std::error_code& ec)
-        {
-            const auto ldr_base = read_memory<definitions::PEB_T<std::uint64_t>>(peb_address(ec), ec).Ldr;
+    inline std::uint64_t module_handle(const std::string& module_name, std::error_code& ec)
+    {
+        const auto ldr_base = detail::read_memory<definitions::PEB_T<std::uint64_t>>(detail::peb_address(ec), ec).Ldr;
+        if (ec)
+            return 0;
+
+        const auto last_entry = ldr_base
+            + offsetof(definitions::PEB_LDR_DATA_T<std::uint64_t>, InLoadOrderModuleList);
+
+        definitions::LDR_DATA_TABLE_ENTRY_T<std::uint64_t> head;
+        head.InLoadOrderLinks.Flink = detail::read_memory<definitions::PEB_LDR_DATA_T<std::uint64_t>>(ldr_base, ec)
+            .InLoadOrderModuleList.Flink;
+        if (ec)
+            return 0;
+
+        do {
+            detail::read_memory(head.InLoadOrderLinks.Flink, &head, sizeof(head), ec);
             if (ec)
-                return 0;
+                continue;
 
-            const auto last_entry = ldr_base
-                + offsetof(definitions::PEB_LDR_DATA_T<std::uint64_t>, InLoadOrderModuleList);
+            const auto other_module_name_len = head.BaseDllName.Length / sizeof(wchar_t);
+            if (other_module_name_len != module_name.length())
+                continue;
 
-            definitions::LDR_DATA_TABLE_ENTRY_T<std::uint64_t> head;
-            head.InLoadOrderLinks.Flink = read_memory<definitions::PEB_LDR_DATA_T<std::uint64_t>>(ldr_base, ec).InLoadOrderModuleList.Flink;
+            std::vector<wchar_t> other_module_name(other_module_name_len);
+            detail::read_memory(head.BaseDllName.Buffer, other_module_name.data(), head.BaseDllName.Length, ec);
             if (ec)
-                return 0;
+                continue;
 
-            do {
-                read_memory(head.InLoadOrderLinks.Flink, &head, sizeof(head), ec);
-                if (ec)
-                    continue;
+            if (std::equal(begin(module_name), end(module_name), begin(other_module_name)))
+                return head.DllBase;
 
-                const auto other_module_name_len = head.BaseDllName.Length / sizeof(wchar_t);
-                if (other_module_name_len != module_name.length())
-                    continue;
+        } while (head.InLoadOrderLinks.Flink != last_entry);
 
-                std::vector<wchar_t> other_module_name(other_module_name_len);
-                read_memory(head.BaseDllName.Buffer, other_module_name.data(), head.BaseDllName.Length, ec);
-                if (ec)
-                    continue;
+        if (!ec)
+            ec = std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category());
+    }
 
-                if (std::equal(begin(module_name), end(module_name), begin(other_module_name)))
-                    return head.DllBase;
-
-            } while (head.InLoadOrderLinks.Flink != last_entry);
-
-            if (!ec)
-                ec = std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category());
-        }
-
+    namespace detail
+    {
 
         inline IMAGE_EXPORT_DIRECTORY image_export_dir(std::uint64_t ntdll_base)
         {
@@ -577,157 +538,162 @@ namespace wow64pp
             return 0;
         }
 
+    }
 
         // taken from https://github.com/rwfpl/rewolf-wow64ext
 #pragma warning(push)
 #pragma warning(disable : 4409) // illegal instruction size
-        template<typename... Args>
-        inline std::error_code call_function(std::uint64_t func, const Args&... args)
+    template<typename... Args>
+    inline std::error_code call_function(std::uint64_t func, const Args&... args)
+    {
+        std::array<std::uint64_t, sizeof... (args)> arr_args{ std::uint64_t(args)... };
+
+        definitions::reg64 _rcx{ detail::get_or_0<0, sizeof... (args)>(arr_args) };
+        definitions::reg64 _rdx{ detail::get_or_0<1, sizeof... (args)>(arr_args) };
+        definitions::reg64 _r8 { detail::get_or_0<2, sizeof... (args)>(arr_args) };
+        definitions::reg64 _r9 { detail::get_or_0<3, sizeof... (args)>(arr_args) };
+        definitions::reg64 _rax{ 0 };
+
+        definitions::reg64 restArgs = { (static_cast<int>(sizeof... (args)) - 4 > 0)
+            ? reinterpret_cast<std::uint64_t>(&arr_args[4])
+            : 0 };
+
+        // conversion to QWORD for easier use in inline assembly
+        definitions::reg64 _argC = { static_cast<uint64_t>(max(sizeof... (args) - 4, 0)) };
+        DWORD back_esp = 0;
+        WORD  back_fs = 0;
+
+        __asm
         {
-            std::array<std::uint64_t, sizeof... (args)> arr_args{ std::uint64_t(args)... };
+            ;// reset FS segment, to properly handle RFG
+            mov back_fs, fs
+            mov eax, 0x2B
+            mov fs, ax
 
-            definitions::reg64 _rcx{ detail::get_or_0<0, sizeof... (args)>(arr_args) };
-            definitions::reg64 _rdx{ detail::get_or_0<1, sizeof... (args)>(arr_args) };
-            definitions::reg64 _r8 { detail::get_or_0<2, sizeof... (args)>(arr_args) };
-            definitions::reg64 _r9 { detail::get_or_0<3, sizeof... (args)>(arr_args) };
-            definitions::reg64 _rax{ 0 };
+                ;// keep original esp in back_esp variable
+            mov back_esp, esp
 
-            definitions::reg64 restArgs = { (static_cast<int>(sizeof... (args)) - 4 > 0)
-                ? reinterpret_cast<std::uint64_t>(&arr_args[4])
-                : 0 };
+                ;// align esp to 0x10, without aligned stack some syscalls may return errors !
+            ;// (actually, for syscalls it is sufficient to align to 8, but SSE opcodes 
+            ;// requires 0x10 alignment), it will be further adjusted according to the
+            ;// number of arguments above 4
+            and esp, 0xFFFFFFF0
 
-            // conversion to QWORD for easier use in inline assembly
-            definitions::reg64 _argC = { static_cast<uint64_t>(max(sizeof... (args)-4, 0)) };
-            DWORD back_esp = 0;
-            WORD back_fs = 0;
+            WOW64PP_EMIT(0x6A) WOW64PP_EMIT(0x33)                        /*  push   _cs             */ 
+            WOW64PP_EMIT(0xE8) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0)   /*  call   $+5             */ 
+            WOW64PP_EMIT(0x83) WOW64PP_EMIT(4) WOW64PP_EMIT(0x24) WOW64PP_EMIT(5)        /*  add    dword [esp], 5  */ 
+            WOW64PP_EMIT(0xCB)
 
-            __asm
-            {
-                ;// reset FS segment, to properly handle RFG
-                mov back_fs, fs
-                    mov eax, 0x2B
-                    mov fs, ax
+            ;// below code is compiled as x86 inline asm, but it is executed as x64 code
+            ;// that's why it need sometimes WOW64PP_REX_W() macro, right column contains detailed
+            ;// transcription how it will be interpreted by CPU
 
-                    ;// keep original esp in back_esp variable
-                mov back_esp, esp
+            ;// fill first four arguments
+            WOW64PP_REX_W mov ecx, _rcx.dw[0];// mov     rcx, qword ptr [_rcx]
+            WOW64PP_REX_W mov edx, _rdx.dw[0];// mov     rdx, qword ptr [_rdx]
+            push _r8.v;// push    qword ptr [_r8]
+            WOW64PP_X64_POP(8); ;// pop     r8
+            push _r9.v;// push    qword ptr [_r9]
+            WOW64PP_X64_POP(9); ;// pop     r9
+            ;//
+            WOW64PP_REX_W mov eax, _argC.dw[0];// mov     rax, qword ptr [_argC]
+            ;// 
+            ;// final stack adjustment, according to the    ;//
+            ;// number of arguments above 4                 ;// 
+            test al, 1;// test    al, 1
+            jnz _no_adjust;// jnz     _no_adjust
+            sub esp, 8;// sub     rsp, 8
+        _no_adjust:;//
+            ;// 
+            push edi;// push    rdi
+            WOW64PP_REX_W mov edi, restArgs.dw[0];// mov     rdi, qword ptr [restArgs]
+            ;// 
+            ;// put rest of arguments on the stack          ;// 
+            WOW64PP_REX_W test eax, eax;// test    rax, rax
+            jz _ls_e;// je      _ls_e
+            WOW64PP_REX_W lea edi, dword ptr[edi + 8 * eax - 8];// lea     rdi, [rdi + rax*8 - 8]
+            ;// 
+        _ls:;// 
+            WOW64PP_REX_W test eax, eax;// test    rax, rax
+            jz _ls_e;// je      _ls_e
+            push dword ptr[edi];// push    qword ptr [rdi]
+            WOW64PP_REX_W sub edi, 8;// sub     rdi, 8
+            WOW64PP_REX_W sub eax, 1;// sub     rax, 1
+            jmp _ls;// jmp     _ls
+        _ls_e:;// 
+            ;// 
+            ;// create stack space for spilling registers   ;// 
+            WOW64PP_REX_W sub esp, 0x20;// sub     rsp, 20h
+            ;// 
+            call func;// call    qword ptr [func]
+            ;// 
+            ;// cleanup stack                               ;// 
+            WOW64PP_REX_W mov ecx, _argC.dw[0];// mov     rcx, qword ptr [_argC]
+            WOW64PP_REX_W lea esp, dword ptr[esp + 8 * ecx + 0x20];// lea     rsp, [rsp + rcx*8 + 20h]
+            ;// 
+            pop edi;// pop     rdi
+            ;// 
+                // set return value                             ;// 
+            WOW64PP_REX_W mov _rax.dw[0], eax;// mov     qword ptr [_rax], rax
 
-                    ;// align esp to 0x10, without aligned stack some syscalls may return errors !
-                ;// (actually, for syscalls it is sufficient to align to 8, but SSE opcodes 
-                ;// requires 0x10 alignment), it will be further adjusted according to the
-                ;// number of arguments above 4
-                and esp, 0xFFFFFFF0
+            WOW64PP_EMIT(0xE8) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0)                                  /*  call   $+5                   */ 
+            WOW64PP_EMIT(0xC7) WOW64PP_EMIT(0x44) WOW64PP_EMIT(0x24) WOW64PP_EMIT(4) WOW64PP_EMIT(0x23) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) /*  mov    dword [rsp + 4], _cs  */ 
+            WOW64PP_EMIT(0x83) WOW64PP_EMIT(4) WOW64PP_EMIT(0x24) WOW64PP_EMIT(0xD)                                     /*  add    dword [rsp], 0xD      */ 
+            WOW64PP_EMIT(0xCB)                                                                  /*  retf                         */ 
 
-                    X64_Start_with_CS(0x33);
+            mov ax, ds
+                mov ss, ax
+                mov esp, back_esp
 
-                ;// below code is compiled as x86 inline asm, but it is executed as x64 code
-                ;// that's why it need sometimes REX_W() macro, right column contains detailed
-                ;// transcription how it will be interpreted by CPU
-
-                ;// fill first four arguments
-                REX_W mov ecx, _rcx.dw[0];// mov     rcx, qword ptr [_rcx]
-                REX_W mov edx, _rdx.dw[0];// mov     rdx, qword ptr [_rdx]
-                push _r8.v;// push    qword ptr [_r8]
-                X64_Pop(_R8); ;// pop     r8
-                push _r9.v;// push    qword ptr [_r9]
-                X64_Pop(_R9); ;// pop     r9
-                ;//
-                REX_W mov eax, _argC.dw[0];// mov     rax, qword ptr [_argC]
-                ;// 
-                ;// final stack adjustment, according to the    ;//
-                ;// number of arguments above 4                 ;// 
-                test al, 1;// test    al, 1
-                jnz _no_adjust;// jnz     _no_adjust
-                sub esp, 8;// sub     rsp, 8
-            _no_adjust:;//
-                ;// 
-                push edi;// push    rdi
-                REX_W mov edi, restArgs.dw[0];// mov     rdi, qword ptr [restArgs]
-                ;// 
-                ;// put rest of arguments on the stack          ;// 
-                REX_W test eax, eax;// test    rax, rax
-                jz _ls_e;// je      _ls_e
-                REX_W lea edi, dword ptr[edi + 8 * eax - 8];// lea     rdi, [rdi + rax*8 - 8]
-                ;// 
-            _ls:;// 
-                REX_W test eax, eax;// test    rax, rax
-                jz _ls_e;// je      _ls_e
-                push dword ptr[edi];// push    qword ptr [rdi]
-                REX_W sub edi, 8;// sub     rdi, 8
-                REX_W sub eax, 1;// sub     rax, 1
-                jmp _ls;// jmp     _ls
-            _ls_e:;// 
-                ;// 
-                ;// create stack space for spilling registers   ;// 
-                REX_W sub esp, 0x20;// sub     rsp, 20h
-                ;// 
-                call func;// call    qword ptr [func]
-                ;// 
-                ;// cleanup stack                               ;// 
-                REX_W mov ecx, _argC.dw[0];// mov     rcx, qword ptr [_argC]
-                REX_W lea esp, dword ptr[esp + 8 * ecx + 0x20];// lea     rsp, [rsp + rcx*8 + 20h]
-                ;// 
-                pop edi;// pop     rdi
-                ;// 
-                 // set return value                             ;// 
-                REX_W mov _rax.dw[0], eax;// mov     qword ptr [_rax], rax
-
-                X64_End_with_CS(0x23);
-
-                mov ax, ds
-                    mov ss, ax
-                    mov esp, back_esp
-
-                    ;// restore FS segment
-                mov ax, back_fs
-                    mov fs, ax
-            }
-
-            return (_rax.v != 0 ? std::error_code(static_cast<int>(_rax.v), std::system_category()) : std::error_code{});
+                ;// restore FS segment
+            mov ax, back_fs
+                mov fs, ax
         }
+
+        return (_rax.v != 0 ? std::error_code(static_cast<int>(_rax.v), std::system_category()) : std::error_code{});
+    }
 #pragma warning(pop)
 
-        inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name)
-        {
-            const static auto ldr_procedure_address_base = ldr_procedure_address();
+    inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name)
+    {
+        const static auto ldr_procedure_address_base = detail::ldr_procedure_address();
 
-            definitions::UNICODE_STRING_T<std::uint64_t> unicode_fun_name;
-            unicode_fun_name.Buffer = reinterpret_cast<std::uint64_t>(&procedure_name[0]);
-            unicode_fun_name.Length = static_cast<USHORT>(procedure_name.size());
-            unicode_fun_name.MaximumLength = unicode_fun_name.Length + 1;
+        definitions::UNICODE_STRING_T<std::uint64_t> unicode_fun_name;
+        unicode_fun_name.Buffer = reinterpret_cast<std::uint64_t>(&procedure_name[0]);
+        unicode_fun_name.Length = static_cast<USHORT>(procedure_name.size());
+        unicode_fun_name.MaximumLength = unicode_fun_name.Length + 1;
 
-            std::uint64_t ret;
-            auto ec = call_function(ldr_procedure_address_base
-                                    , hmodule
-                                    , reinterpret_cast<std::uint64_t>(&unicode_fun_name)
-                                    , static_cast<std::uint64_t>(0)
-                                    , reinterpret_cast<std::uint64_t>(&ret));
-            if (ec)
-                throw std::system_error(ec, "call_function(ldr_procedure_address_base...) failed");
+        std::uint64_t ret;
+        auto ec = call_function(ldr_procedure_address_base
+                                , hmodule
+                                , reinterpret_cast<std::uint64_t>(&unicode_fun_name)
+                                , static_cast<std::uint64_t>(0)
+                                , reinterpret_cast<std::uint64_t>(&ret));
+        if (ec)
+            throw std::system_error(ec, "call_function(ldr_procedure_address_base...) failed");
 
-            return ret;
-        }
+        return ret;
+    }
 
-        inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name, std::error_code& ec)
-        {
-            const static auto ldr_procedure_address_base = ldr_procedure_address(ec);
-            if (ec)
-                return 0;
+    inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name, std::error_code& ec)
+    {
+        const static auto ldr_procedure_address_base = detail::ldr_procedure_address(ec);
+        if (ec)
+            return 0;
 
-            definitions::UNICODE_STRING_T<std::uint64_t> unicode_fun_name;
-            unicode_fun_name.Buffer = reinterpret_cast<std::uint64_t>(&procedure_name[0]);
-            unicode_fun_name.Length = static_cast<USHORT>(procedure_name.size());
-            unicode_fun_name.MaximumLength = unicode_fun_name.Length + 1;
+        definitions::UNICODE_STRING_T<std::uint64_t> unicode_fun_name;
+        unicode_fun_name.Buffer = reinterpret_cast<std::uint64_t>(&procedure_name[0]);
+        unicode_fun_name.Length = static_cast<USHORT>(procedure_name.size());
+        unicode_fun_name.MaximumLength = unicode_fun_name.Length + 1;
 
-            std::uint64_t ret;
-            ec = call_function(ldr_procedure_address_base
-                               , hmodule
-                               , reinterpret_cast<std::uint64_t>(&unicode_fun_name)
-                               , static_cast<std::uint64_t>(0)
-                               , reinterpret_cast<std::uint64_t>(&ret));
+        std::uint64_t ret;
+        ec = call_function(ldr_procedure_address_base
+                            , hmodule
+                            , reinterpret_cast<std::uint64_t>(&unicode_fun_name)
+                            , static_cast<std::uint64_t>(0)
+                            , reinterpret_cast<std::uint64_t>(&ret));
 
-            return ret;
-        }
-
+        return ret;
     }
 
 }
