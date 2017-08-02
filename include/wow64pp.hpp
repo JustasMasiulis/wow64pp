@@ -3,13 +3,13 @@
 
 #include <system_error>
 #include <vector>
-#include <tuple>
+#include <array>
 
-namespace wow64pp 
+namespace wow64pp
 {
 
-// no global scope pollution
-#include <Windows.h> 
+    // no global scope pollution
+#include <Windows.h>
 #include <winternl.h>
 
     namespace detail
@@ -31,7 +31,7 @@ namespace wow64pp
         {
             if (FAILED(hr))
                 throw std::system_error(std::error_code(static_cast<int>(hr), std::system_category())
-                                         , message);
+                                        , message);
         }
 
         inline HANDLE self_handle()
@@ -67,10 +67,10 @@ namespace wow64pp
         }
 
 
-        template<std::size_t Idx, bool OOB, typename T> 
+        template<std::size_t Idx, bool OOB, typename T>
         struct get_or_0_impl_t
         {
-            constexpr decltype(auto) operator()(const T& tuple)
+            constexpr auto& operator()(const T& tuple)
             {
                 return std::get<Idx>(tuple);
             }
@@ -91,21 +91,10 @@ namespace wow64pp
             return get_or_0_impl_t<Idx, Idx >= Size, T>{}(tuple);
         }
 
-        template<std::size_t Size>
-        struct get_or_0_t
-        {
-            template<std::size_t Idx, typename T>
-            constexpr decltype(auto) operator()(const T& tuple)
-            {
-                return get_or_0<Idx, Size>(tuple);
-            }
-        };
-
-
     }
 
 
-    namespace definitions 
+    namespace definitions
     {
         // I add only what I need to these structures
 
@@ -149,15 +138,13 @@ namespace wow64pp
         template <class P>
         struct PEB_LDR_DATA_T
         {
+        private:
             DWORD Length;
             DWORD Initialized;
-            P SsHandle;
+            P     SsHandle;
+
+        public:
             LIST_ENTRY_T<P> InLoadOrderModuleList;
-            LIST_ENTRY_T<P> InMemoryOrderModuleList;
-            LIST_ENTRY_T<P> InInitializationOrderModuleList;
-            P EntryInProgress;
-            DWORD ShutdownInProgress;
-            P ShutdownThreadId;
         };
 
 
@@ -165,24 +152,32 @@ namespace wow64pp
         struct UNICODE_STRING_T {
             USHORT Length;
             USHORT MaximumLength;
-            P  Buffer;
+            P      Buffer;
         };
 
 
         template <class P>
         struct LDR_DATA_TABLE_ENTRY_T
         {
+        public:
             LIST_ENTRY_T<P> InLoadOrderLinks;
+        private:
             LIST_ENTRY_T<P> InMemoryOrderLinks;
             LIST_ENTRY_T<P> InInitializationOrderLinks;
-            P DllBase;
-            P EntryPoint;
+
+        public:
+            P               DllBase;
+
+        private:
+            P               EntryPoint;
             union
             {
                 DWORD SizeOfImage;
-                P dummy01;
+                P     _dummy;
             };
             UNICODE_STRING_T<P> FullDllName;
+
+        public:
             UNICODE_STRING_T<P> BaseDllName;
         };
 
@@ -206,13 +201,7 @@ namespace wow64pp
         using RtlNtStatusToDosErrorT = ULONG(WINAPI *)(NTSTATUS);
 
 
-        using RtlSetLastWin32ErrorT = ULONG(WINAPI *)(NTSTATUS);
-
-
-        
-
-
-        union reg64 
+        union reg64
         {
             DWORD64 v;
             DWORD   dw[2];
@@ -244,7 +233,7 @@ namespace wow64pp
     }
 
 
-    namespace native 
+    namespace native
     {
 
         inline HMODULE module_address(const char* name)
@@ -273,7 +262,7 @@ namespace wow64pp
             auto f = reinterpret_cast<F>(GetProcAddress(ntdll_addr, name));
 
             if (f == nullptr)
-                detail::throw_last_error("failed to get address of ntdll function" + std::string(name));
+                detail::throw_last_error("failed to get address of ntdll function");
 
             return f;
         }
@@ -296,7 +285,7 @@ namespace wow64pp
     }
 
 
-    namespace x64 
+    namespace x64
     {
 
         enum registers
@@ -338,7 +327,7 @@ namespace wow64pp
 
         inline std::uint64_t peb_address(std::error_code& ec) noexcept
         {
-            const auto NtWow64QueryInformationProcess64 
+            const auto NtWow64QueryInformationProcess64
                 = native::ntdll_function<definitions::NtQueryInformationProcessT>("NtWow64QueryInformationProcess64", ec);
             if (ec)
                 return 0;
@@ -371,7 +360,7 @@ namespace wow64pp
         template<typename P>
         inline void read_memory(std::uint64_t address, P* buffer, std::size_t size, std::error_code& ec) noexcept
         {
-            const auto NtWow64ReadVirtualMemory64 
+            const auto NtWow64ReadVirtualMemory64
                 = native::ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
             if (ec)
                 return;
@@ -388,30 +377,52 @@ namespace wow64pp
         }
 
 
+        template<typename T>
+        inline T read_memory(std::uint64_t address)
+        {
+            T buffer;
+            read_memory(address, &buffer);
+            return buffer;
+        }
+
+        template<typename T>
+        inline T read_memory(std::uint64_t address, std::error_code& ec) noexcept
+        {
+            if (ec)
+                return T{ 0 };
+
+            T buffer;
+            read_memory(address, &buffer, sizeof(T), ec);
+            return buffer;
+        }
+
+
         inline std::uint64_t module_handle(const std::string& module_name)
         {
-            definitions::PEB_T<std::uint64_t> peb64;
-            read_memory(peb_address(), &peb64, sizeof(peb64));
+            const auto ldr_base = read_memory<definitions::PEB_T<std::uint64_t>>(peb_address()).Ldr;
 
-            definitions::PEB_LDR_DATA_T<std::uint64_t> ldr;
-            read_memory(peb64.Ldr, &ldr, sizeof(ldr));
-
-            const auto last_entry = peb64.Ldr
+            const auto last_entry = ldr_base
                 + offsetof(definitions::PEB_LDR_DATA_T<std::uint64_t>, InLoadOrderModuleList);
 
             definitions::LDR_DATA_TABLE_ENTRY_T<std::uint64_t> head;
-            head.InLoadOrderLinks.Flink = ldr.InLoadOrderModuleList.Flink;
+            head.InLoadOrderLinks.Flink = read_memory<definitions::PEB_LDR_DATA_T<std::uint64_t>>(ldr_base).InLoadOrderModuleList.Flink;
 
             do {
-                read_memory(head.InLoadOrderLinks.Flink, &head, sizeof(head));
+                try 
+                {
+                    read_memory(head.InLoadOrderLinks.Flink, &head);
+                }
+                catch (std::system_error)
+                {
+                    continue;
+                }
 
-                auto other_module_name_len = head.BaseDllName.Length / sizeof(wchar_t);
+                const auto other_module_name_len = head.BaseDllName.Length / sizeof(wchar_t);
                 if (other_module_name_len != module_name.length())
                     continue;
 
-                std::wstring other_module_name;
-                other_module_name.resize(other_module_name_len);
-                read_memory(head.BaseDllName.Buffer, &other_module_name[0], head.BaseDllName.Length);
+                std::vector<wchar_t> other_module_name(other_module_name_len);
+                read_memory(head.BaseDllName.Buffer, other_module_name.data(), head.BaseDllName.Length);
 
                 if (std::equal(begin(module_name), end(module_name), begin(other_module_name)))
                     return head.DllBase;
@@ -423,41 +434,29 @@ namespace wow64pp
 
         inline std::uint64_t module_handle(const std::string& module_name, std::error_code& ec)
         {
-            definitions::PEB_T<std::uint64_t> peb64;
-            {
-                const auto peb_addr = peb_address(ec);
-                if (ec)
-                    return 0;
-
-                read_memory(peb_addr, &peb64, sizeof(peb64), ec);
-
-                if (ec)
-                    return 0;
-            }
-
-            definitions::PEB_LDR_DATA_T<std::uint64_t> ldr;
-            read_memory(peb64.Ldr, &ldr, sizeof(ldr), ec);
+            const auto ldr_base = read_memory<definitions::PEB_T<std::uint64_t>>(peb_address(ec), ec).Ldr;
             if (ec)
                 return 0;
 
-            const auto last_entry = peb64.Ldr
+            const auto last_entry = ldr_base
                 + offsetof(definitions::PEB_LDR_DATA_T<std::uint64_t>, InLoadOrderModuleList);
 
             definitions::LDR_DATA_TABLE_ENTRY_T<std::uint64_t> head;
-            head.InLoadOrderLinks.Flink = ldr.InLoadOrderModuleList.Flink;
+            head.InLoadOrderLinks.Flink = read_memory<definitions::PEB_LDR_DATA_T<std::uint64_t>>(ldr_base, ec).InLoadOrderModuleList.Flink;
+            if (ec)
+                return 0;
 
             do {
                 read_memory(head.InLoadOrderLinks.Flink, &head, sizeof(head), ec);
                 if (ec)
                     continue;
 
-                auto other_module_name_len = head.BaseDllName.Length / sizeof(wchar_t);
+                const auto other_module_name_len = head.BaseDllName.Length / sizeof(wchar_t);
                 if (other_module_name_len != module_name.length())
                     continue;
 
-                std::wstring other_module_name;
-                other_module_name.resize(other_module_name_len);
-                read_memory(head.BaseDllName.Buffer, &other_module_name[0], head.BaseDllName.Length, ec);
+                std::vector<wchar_t> other_module_name(other_module_name_len);
+                read_memory(head.BaseDllName.Buffer, other_module_name.data(), head.BaseDllName.Length, ec);
                 if (ec)
                     continue;
 
@@ -473,46 +472,36 @@ namespace wow64pp
 
         inline IMAGE_EXPORT_DIRECTORY image_export_dir(std::uint64_t ntdll_base)
         {
-            IMAGE_DOS_HEADER idh;
-            read_memory(ntdll_base, &idh, sizeof(IMAGE_DOS_HEADER));
+            const auto e_lfanew = read_memory<IMAGE_DOS_HEADER>(ntdll_base).e_lfanew;
 
-            IMAGE_NT_HEADERS64 inh;
-            read_memory(ntdll_base + idh.e_lfanew, &inh, sizeof(IMAGE_NT_HEADERS64));
+            const auto idd_virtual_addr = read_memory<IMAGE_NT_HEADERS64>(ntdll_base + e_lfanew)
+                .OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT]
+                .VirtualAddress;
 
-            const auto idd = inh.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
-            if (idd.VirtualAddress == 0)
+            if (idd_virtual_addr == 0)
                 throw std::runtime_error("IMAGE_EXPORT_DIRECTORY::VirtualAddress was 0");
 
-            IMAGE_EXPORT_DIRECTORY ied;
-            read_memory(ntdll_base + idd.VirtualAddress, &ied, sizeof(IMAGE_EXPORT_DIRECTORY));
-
-            return ied;
+            return read_memory<IMAGE_EXPORT_DIRECTORY>(ntdll_base + idd_virtual_addr);
         }
 
         inline IMAGE_EXPORT_DIRECTORY image_export_dir(std::uint64_t ntdll_base, std::error_code& ec) noexcept
         {
-            IMAGE_DOS_HEADER idh;
-            read_memory(ntdll_base, &idh, sizeof(IMAGE_DOS_HEADER), ec);
+            const auto e_lfanew = read_memory<IMAGE_DOS_HEADER>(ntdll_base, ec).e_lfanew;
             if (ec)
                 return {};
 
-            IMAGE_NT_HEADERS64 inh;
-            read_memory(ntdll_base + idh.e_lfanew, &inh, sizeof(IMAGE_NT_HEADERS64), ec);
+            const auto idd_virtual_addr = read_memory<IMAGE_NT_HEADERS64>(ntdll_base + e_lfanew, ec)
+                .OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT]
+                .VirtualAddress;
             if (ec)
                 return {};
 
-            const auto idd = inh.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT];
-
-            if (idd.VirtualAddress == 0) {
+            if (idd_virtual_addr == 0) {
                 ec = std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category());
                 return {};
             }
-                
 
-            IMAGE_EXPORT_DIRECTORY ied;
-            read_memory(ntdll_base + idd.VirtualAddress, &ied, sizeof(IMAGE_EXPORT_DIRECTORY), ec);
-
-            return ied;
+            return read_memory<IMAGE_EXPORT_DIRECTORY>(ntdll_base + idd_virtual_addr, ec);
         }
 
 
@@ -520,7 +509,7 @@ namespace wow64pp
         {
             const static auto ntdll_base = module_handle("ntdll.dll");
 
-            auto ied = image_export_dir(ntdll_base);
+            const auto ied = image_export_dir(ntdll_base);
 
             std::vector<DWORD> rva_table(ied.NumberOfFunctions);
             read_memory(ntdll_base + ied.AddressOfFunctions, rva_table.data(), sizeof(DWORD) * ied.NumberOfFunctions);
@@ -543,7 +532,7 @@ namespace wow64pp
             }
 
             throw std::system_error(std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category())
-                            , "Could find x64 LdrGetProcedureAddress");
+                                    , "Could find x64 LdrGetProcedureAddress");
         }
 
         inline std::uint64_t ldr_procedure_address(std::error_code& ec)
@@ -552,7 +541,7 @@ namespace wow64pp
             if (ec)
                 return 0;
 
-            auto ied = image_export_dir(ntdll_base, ec);
+            const auto ied = image_export_dir(ntdll_base, ec);
             if (ec)
                 return 0;
 
@@ -589,24 +578,26 @@ namespace wow64pp
         }
 
 
+        // taken from https://github.com/rwfpl/rewolf-wow64ext
 #pragma warning(push)
 #pragma warning(disable : 4409) // illegal instruction size
         template<typename... Args>
-        inline std::error_code __cdecl call_function(std::uint64_t func, Args&&... args)
+        inline std::error_code call_function(std::uint64_t func, const Args&... args)
         {
-            auto tup_elements = std::forward_as_tuple(reinterpret_cast<std::uint64_t>(args)...);
-            constexpr std::size_t argc = sizeof... (args);
+            std::array<std::uint64_t, sizeof... (args)> arr_args{ std::uint64_t(args)... };
 
-            definitions::reg64 _rcx = reinterpret_cast<std::uint64_t>(detail::get_or_0<0, argc>(tup_elements));
-            definitions::reg64 _rdx = reinterpret_cast<std::uint64_t>(detail::get_or_0<1, argc>(tup_elements));
-            definitions::reg64 _r8 = reinterpret_cast<std::uint64_t>(detail::get_or_0<2, argc>(tup_elements));
-            definitions::reg64 _r9 = reinterpret_cast<std::uint64_t>(detail::get_or_0<3, argc>(tup_elements));
-            definitions::reg64 _rax = { 0 };
+            definitions::reg64 _rcx{ detail::get_or_0<0, sizeof... (args)>(arr_args) };
+            definitions::reg64 _rdx{ detail::get_or_0<1, sizeof... (args)>(arr_args) };
+            definitions::reg64 _r8 { detail::get_or_0<2, sizeof... (args)>(arr_args) };
+            definitions::reg64 _r9 { detail::get_or_0<3, sizeof... (args)>(arr_args) };
+            definitions::reg64 _rax{ 0 };
 
-            definitions::reg64 restArgs = reinterpret_cast<std::uint64_t>(&detail::get_or_0<4, argc>(tup_elements));
+            definitions::reg64 restArgs = { (static_cast<int>(sizeof... (args)) - 4 > 0)
+                ? reinterpret_cast<std::uint64_t>(&arr_args[4])
+                : 0 };
 
             // conversion to QWORD for easier use in inline assembly
-            definitions::reg64 _argC = { static_cast<uint64_t>(argc) };
+            definitions::reg64 _argC = { static_cast<uint64_t>(max(sizeof... (args)-4, 0)) };
             DWORD back_esp = 0;
             WORD back_fs = 0;
 
@@ -691,12 +682,9 @@ namespace wow64pp
                     mov fs, ax
             }
 
-            return (_rax.v == 0
-                ? std::error_code()
-                : std::error_code(RtlNtStatusToDosError(static_cast<NTSTATUS>(_rax.v)), std::system_category()));
+            return (_rax.v != 0 ? std::error_code(static_cast<int>(_rax.v), std::system_category()) : std::error_code{});
         }
 #pragma warning(pop)
-
 
         inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name)
         {
@@ -709,11 +697,10 @@ namespace wow64pp
 
             std::uint64_t ret;
             auto ec = call_function(ldr_procedure_address_base
-                     , 4
-                     , hmodule
-                     , reinterpret_cast<std::uint64_t>(&unicode_fun_name)
-                     , static_cast<std::uint64_t>(0)
-                     , reinterpret_cast<std::uint64_t>(&ret));
+                                    , hmodule
+                                    , reinterpret_cast<std::uint64_t>(&unicode_fun_name)
+                                    , static_cast<std::uint64_t>(0)
+                                    , reinterpret_cast<std::uint64_t>(&ret));
             if (ec)
                 throw std::system_error(ec, "call_function(ldr_procedure_address_base...) failed");
 
@@ -722,7 +709,9 @@ namespace wow64pp
 
         inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name, std::error_code& ec)
         {
-            const static auto ldr_procedure_address_base = ldr_procedure_address();
+            const static auto ldr_procedure_address_base = ldr_procedure_address(ec);
+            if (ec)
+                return 0;
 
             definitions::UNICODE_STRING_T<std::uint64_t> unicode_fun_name;
             unicode_fun_name.Buffer = reinterpret_cast<std::uint64_t>(&procedure_name[0]);
@@ -731,7 +720,6 @@ namespace wow64pp
 
             std::uint64_t ret;
             ec = call_function(ldr_procedure_address_base
-                               , 4
                                , hmodule
                                , reinterpret_cast<std::uint64_t>(&unicode_fun_name)
                                , static_cast<std::uint64_t>(0)
