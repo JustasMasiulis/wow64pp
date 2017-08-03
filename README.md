@@ -27,5 +27,5 @@ auto x64_NtQueryVirtualMemory = wow64pp::procedure_address(x64_ntdll_handle, "Nt
 winapi::MEMORY_BASIC_INFORMATION64 memory_info;
 std::uint64_t result_len;
 auto ec = wow64pp::call_function(x64_NtQueryVirtualMemory, process_handle, address
-								, 0, &memory_info, sizeof(memory_info), &result_len);
+				, 0, &memory_info, sizeof(memory_info), &result_len);
 ```
