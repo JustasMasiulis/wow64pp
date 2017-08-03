@@ -1,5 +1,18 @@
-
-
+/*
+* Copyright 2017 Justas Masiulis
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*     http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
 
 #ifndef WOW64PP_HPP
 #define WOW64PP_HPP
@@ -355,6 +368,11 @@ namespace wow64pp
     }
 
 
+    /** \brief An equalient of winapi GetModuleHandle function.
+    *   \param[in] module_name The name of the module to get the handle of.
+    *   \return    The handle to the module as a 64 bit integer.
+    *   \exception Throws std::system_error on failure.
+    */
     inline std::uint64_t module_handle(const std::string& module_name)
     {
         const auto ldr_base = detail::read_memory<definitions::PEB_T<std::uint64_t>>(detail::peb_address()).Ldr;
@@ -391,6 +409,12 @@ namespace wow64pp
                                 , "Could not get x64 module handle");
     }
 
+    /** \brief An equalient of winapi GetModuleHandle function.
+    *   \param[in] module_name The name of the module to get the handle of.
+    *   \param[out] ec An error code that will be set in case of failure
+    *   \return    The handle to the module as a 64 bit integer.
+    *   \exception Does not throw.
+    */
     inline std::uint64_t module_handle(const std::string& module_name, std::error_code& ec)
     {
         const auto ldr_base = detail::read_memory<definitions::PEB_T<std::uint64_t>>(detail::peb_address(ec), ec).Ldr;
@@ -546,6 +570,12 @@ namespace wow64pp
         // taken from https://github.com/rwfpl/rewolf-wow64ext
 #pragma warning(push)
 #pragma warning(disable : 4409) // illegal instruction size
+    /** \brief Calls a 64 bit function from 32 bit process
+    *   \param[in] func The address of 64 bit function to be called.
+    *   \param[in] args... The arguments for the function to be called.
+    *   \return    An error_code specifying whether the call succeeded.
+    *   \exception Does not throw.
+    */
     template<typename... Args>
     inline std::error_code call_function(std::uint64_t func, const Args&... args)
     {
@@ -658,6 +688,12 @@ namespace wow64pp
 #pragma warning(pop)
 
 
+    /** \brief An equalient of winapi GetProcAddress function.
+    *   \param[in] hmodule The handle to the module in which to search for the procedure.
+    *   \param[in] procedure_name The name of the procedure to be searched for.
+    *   \return    The address of the exported function or variable.
+    *   \exception Throws std::system_error on failure.
+    */
     inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name)
     {
         const static auto ldr_procedure_address_base = detail::ldr_procedure_address();
@@ -679,6 +715,13 @@ namespace wow64pp
         return ret;
     }
 
+    /** \brief An equalient of winapi GetProcAddress function.
+    *   \param[in] hmodule The handle to the module in which to search for the procedure.
+    *   \param[in] procedure_name The name of the procedure to be searched for.
+    *   \param[out] ec An error code that will be set in case of failure
+    *   \return    The address of the exported function or variable.
+    *   \exception Does not throw.
+    */
     inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name, std::error_code& ec)
     {
         const static auto ldr_procedure_address_base = detail::ldr_procedure_address(ec);
