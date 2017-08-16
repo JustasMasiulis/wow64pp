@@ -451,6 +451,8 @@ namespace wow64pp
 
         if (!ec)
             ec = std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category());
+        
+        return 0;
     }
 
 
