@@ -18,14 +18,18 @@
 #define WOW64PP_HPP
 
 #include <system_error>
-#include <vector>
-#include <array>
+#include <memory>
 
 namespace wow64pp
 {
-
-#include <Windows.h>
-#include <winternl.h>
+#ifndef WOW64PP_CUSTOM_WINDOWS_INCLUDE
+    #define NOMINMAX
+    #include <Windows.h>
+    #include <winternl.h>
+    #undef NOMINMAX
+#else
+    WOW64PP_CUSTOM_WINDOWS_INCLUDE;
+#endif
 
 
     namespace definitions
@@ -83,7 +87,8 @@ namespace wow64pp
 
 
         template<typename P>
-        struct UNICODE_STRING_T {
+        struct UNICODE_STRING_T 
+        {
             USHORT Length;
             USHORT MaximumLength;
             P      Buffer;
@@ -132,9 +137,6 @@ namespace wow64pp
             OUT PULONG64 NumberOfBytesRead);
 
 
-        using RtlNtStatusToDosErrorT = ULONG(WINAPI *)(NTSTATUS);
-
-
         union reg64
         {
             DWORD64 v;
@@ -168,14 +170,14 @@ namespace wow64pp
 
         inline void throw_if_failed(const char* message, HRESULT hr)
         {
-            if (FAILED(hr))
+            if (hr < 0)
                 throw std::system_error(std::error_code(static_cast<int>(hr), std::system_category())
                                         , message);
         }
 
         inline HANDLE self_handle()
         {
-            static HANDLE h = INVALID_HANDLE_VALUE;
+            HANDLE h;
 
             if (DuplicateHandle(GetCurrentProcess()
                 , GetCurrentProcess()
@@ -191,7 +193,7 @@ namespace wow64pp
 
         inline HANDLE self_handle(std::error_code& ec) noexcept
         {
-            static HANDLE h = INVALID_HANDLE_VALUE;
+            HANDLE h;
 
             if (DuplicateHandle(GetCurrentProcess()
                 , GetCurrentProcess()
@@ -235,7 +237,7 @@ namespace wow64pp
         {
             const auto addr = GetModuleHandleA(name);
             if (addr == nullptr)
-                detail::throw_last_error("GetModuleHandleA  returned NULL");
+                throw_last_error("GetModuleHandleA() failed");
 
             return addr;
         }
@@ -244,7 +246,7 @@ namespace wow64pp
         {
             const auto addr = GetModuleHandleA(name);
             if (addr == nullptr)
-                ec = detail::get_last_error();
+                ec = get_last_error();
 
             return addr;
         }
@@ -257,7 +259,7 @@ namespace wow64pp
             auto f = reinterpret_cast<F>(GetProcAddress(ntdll_addr, name));
 
             if (f == nullptr)
-                detail::throw_last_error("failed to get address of ntdll function");
+                throw_last_error("failed to get address of ntdll function");
 
             return f;
         }
@@ -277,6 +279,7 @@ namespace wow64pp
             return f;
         }
 
+
         inline std::uint64_t peb_address()
         {
             const static auto NtWow64QueryInformationProcess64
@@ -288,7 +291,7 @@ namespace wow64pp
                                                          , &pbi
                                                          , sizeof(pbi)
                                                          , nullptr);
-            detail::throw_if_failed("NtWow64QueryInformationProcess64() failed", hres);
+            throw_if_failed("NtWow64QueryInformationProcess64() failed", hres);
 
             return pbi.PebBaseAddress;
         }
@@ -316,6 +319,13 @@ namespace wow64pp
         template<typename P>
         inline void read_memory(std::uint64_t address, P* buffer, std::size_t size = sizeof(P))
         {
+            if (address < std::numeric_limits<std::uint32_t>::max()) {
+                std::memcpy(buffer
+                            , reinterpret_cast<const void*>(static_cast<std::uint32_t>(address))
+                            , size);
+                return;
+            }
+
             const static auto NtWow64ReadVirtualMemory64
                 = native_ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64");
 
@@ -328,6 +338,13 @@ namespace wow64pp
         template<typename P>
         inline void read_memory(std::uint64_t address, P* buffer, std::size_t size, std::error_code& ec) noexcept
         {
+            if (address < std::numeric_limits<std::uint32_t>::max()) {
+                std::memcpy(buffer
+                            , reinterpret_cast<const void*>(static_cast<std::uint32_t>(address))
+                            , size);
+                return;
+            }
+
             const auto NtWow64ReadVirtualMemory64
                 = native_ntdll_function<definitions::NtWow64ReadVirtualMemory64T>("NtWow64ReadVirtualMemory64", ec);
             if (ec)
@@ -348,21 +365,19 @@ namespace wow64pp
         template<typename T>
         inline T read_memory(std::uint64_t address)
         {
-            T buffer;
-            read_memory(address, &buffer);
-            return buffer;
+            typename std::aligned_storage<sizeof(T)
+                , std::alignment_of<T>::value>::type buffer;
+            read_memory(address, &buffer, sizeof(T));
+            return static_cast<T*>(static_cast<void*>(&buffer));
         }
 
         template<typename T>
         inline T read_memory(std::uint64_t address, std::error_code& ec) noexcept
         {
-            T buffer;
-            memset(&buffer, 0, sizeof(T));
-            if (ec)
-                return buffer;
-
+            typename std::aligned_storage<sizeof(T)
+                , std::alignment_of<T>::value>::type buffer;
             read_memory(address, &buffer, sizeof(T), ec);
-            return buffer;
+            return static_cast<T*>(static_cast<void*>(&buffer));
         }
 
     }
@@ -389,7 +404,7 @@ namespace wow64pp
             {
                 detail::read_memory(head.InLoadOrderLinks.Flink, &head);
             }
-            catch (std::system_error)
+            catch (std::system_error&)
             {
                 continue;
             }
@@ -398,10 +413,10 @@ namespace wow64pp
             if (other_module_name_len != module_name.length())
                 continue;
 
-            std::vector<wchar_t> other_module_name(other_module_name_len);
-            detail::read_memory(head.BaseDllName.Buffer, other_module_name.data(), head.BaseDllName.Length);
+            auto other_module_name = std::make_unique<wchar_t[]>(other_module_name_len);
+            detail::read_memory(head.BaseDllName.Buffer, other_module_name.get(), head.BaseDllName.Length);
 
-            if (std::equal(begin(module_name), end(module_name), begin(other_module_name)))
+            if (std::equal(begin(module_name), end(module_name), other_module_name.get()))
                 return head.DllBase;
         } while (head.InLoadOrderLinks.Flink != last_entry);
 
@@ -439,12 +454,12 @@ namespace wow64pp
             if (other_module_name_len != module_name.length())
                 continue;
 
-            std::vector<wchar_t> other_module_name(other_module_name_len);
-            detail::read_memory(head.BaseDllName.Buffer, other_module_name.data(), head.BaseDllName.Length, ec);
+            auto other_module_name = std::make_unique<wchar_t[]>(other_module_name_len);
+            detail::read_memory(head.BaseDllName.Buffer, other_module_name.get(), head.BaseDllName.Length, ec);
             if (ec)
                 continue;
 
-            if (std::equal(begin(module_name), end(module_name), begin(other_module_name)))
+            if (std::equal(begin(module_name), end(module_name), other_module_name.get()))
                 return head.DllBase;
 
         } while (head.InLoadOrderLinks.Flink != last_entry);
@@ -498,19 +513,19 @@ namespace wow64pp
 
             const auto ied = image_export_dir(ntdll_base);
 
-            std::vector<DWORD> rva_table(ied.NumberOfFunctions);
-            read_memory(ntdll_base + ied.AddressOfFunctions, rva_table.data(), sizeof(DWORD) * ied.NumberOfFunctions);
+            auto rva_table = std::make_unique<DWORD[]>(ied.NumberOfFunctions);
+            read_memory(ntdll_base + ied.AddressOfFunctions, rva_table.get(), sizeof(DWORD) * ied.NumberOfFunctions);
 
-            std::vector<WORD> ord_table(ied.NumberOfFunctions);
-            read_memory(ntdll_base + ied.AddressOfNameOrdinals, ord_table.data(), sizeof(WORD) * ied.NumberOfFunctions);
+            auto ord_table = std::make_unique<WORD[]>(ied.NumberOfFunctions);
+            read_memory(ntdll_base + ied.AddressOfNameOrdinals, ord_table.get(), sizeof(WORD) * ied.NumberOfFunctions);
 
-            std::vector<DWORD> name_table(ied.NumberOfNames);
-            read_memory(ntdll_base + ied.AddressOfNames, name_table.data(), sizeof(DWORD) * ied.NumberOfNames);
+            auto name_table = std::make_unique<DWORD[]>(ied.NumberOfNames);
+            read_memory(ntdll_base + ied.AddressOfNames, name_table.get(), sizeof(DWORD) * ied.NumberOfNames);
 
             const std::string to_find("LdrGetProcedureAddress");
             std::string buffer = to_find;
 
-            const std::size_t n = min(ied.NumberOfFunctions, ied.NumberOfNames);
+            const std::size_t n = std::min(ied.NumberOfFunctions, ied.NumberOfNames);
             for (std::size_t i = 0; i < n; ++i) {
                 read_memory(ntdll_base + name_table[i], &buffer[0], buffer.size());
 
@@ -519,7 +534,7 @@ namespace wow64pp
             }
 
             throw std::system_error(std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category())
-                                    , "Could find x64 LdrGetProcedureAddress");
+                                    , "could find x64 LdrGetProcedureAddress()");
         }
 
         inline std::uint64_t ldr_procedure_address(std::error_code& ec)
@@ -532,25 +547,26 @@ namespace wow64pp
             if (ec)
                 return 0;
 
-            std::vector<DWORD> rva_table(ied.NumberOfFunctions);
-            read_memory(ntdll_base + ied.AddressOfFunctions, rva_table.data(), sizeof(DWORD) * ied.NumberOfFunctions, ec);
+            auto rva_table = std::make_unique<DWORD[]>(ied.NumberOfFunctions);
+            read_memory(ntdll_base + ied.AddressOfFunctions, rva_table.get(), sizeof(DWORD) * ied.NumberOfFunctions, ec);
             if (ec)
                 return 0;
 
-            std::vector<WORD> ord_table(ied.NumberOfFunctions);
-            read_memory(ntdll_base + ied.AddressOfNameOrdinals, ord_table.data(), sizeof(WORD) * ied.NumberOfFunctions, ec);
+            auto ord_table = std::make_unique<WORD[]>(ied.NumberOfFunctions);
+            read_memory(ntdll_base + ied.AddressOfNameOrdinals, ord_table.get(), sizeof(WORD) * ied.NumberOfFunctions, ec);
             if (ec)
                 return 0;
 
-            std::vector<DWORD> name_table(ied.NumberOfNames);
-            read_memory(ntdll_base + ied.AddressOfNames, name_table.data(), sizeof(DWORD) * ied.NumberOfNames, ec);
+            auto name_table = std::make_unique<DWORD[]>(ied.NumberOfNames);
+            read_memory(ntdll_base + ied.AddressOfNames, name_table.get(), sizeof(DWORD) * ied.NumberOfNames, ec);
             if (ec)
                 return 0;
 
             const std::string to_find("LdrGetProcedureAddress");
-            std::string buffer = to_find;
+            std::string buffer;
+            buffer.resize(to_find.size());
 
-            const std::size_t n = min(ied.NumberOfFunctions, ied.NumberOfNames);
+            const std::size_t n = std::min(ied.NumberOfFunctions, ied.NumberOfNames);
             for (std::size_t i = 0; i < n; ++i) {
                 read_memory(ntdll_base + name_table[i], &buffer[0], buffer.size(), ec);
                 if (ec)
@@ -579,7 +595,7 @@ namespace wow64pp
     template<typename... Args>
     inline std::error_code call_function(std::uint64_t func, const Args&... args)
     {
-        std::array<std::uint64_t, sizeof... (args)> arr_args{ std::uint64_t(args)... };
+        std::uint64_t arr_args[sizeof...(args)] = { (std::uint64_t)(args)... };
 
         definitions::reg64 _rcx{ detail::get_or_0<0, sizeof... (args)>(arr_args) };
         definitions::reg64 _rdx{ detail::get_or_0<1, sizeof... (args)>(arr_args) };
@@ -588,11 +604,11 @@ namespace wow64pp
         definitions::reg64 _rax{ 0 };
 
         definitions::reg64 restArgs = { (static_cast<int>(sizeof... (args)) - 4 > 0)
-            ? reinterpret_cast<std::uint64_t>(&arr_args[4])
+            ? reinterpret_cast<std::uint64_t>(arr_args.data() + 4)
             : 0 };
 
         // conversion to QWORD for easier use in inline assembly
-        definitions::reg64 _argC = { static_cast<uint64_t>(max(sizeof... (args) - 4, 0)) };
+        definitions::reg64 _argC = { static_cast<std::uint64_t>(max(sizeof... (args) - 4, 0)) };
         DWORD back_esp = 0;
         WORD  back_fs = 0;
 
