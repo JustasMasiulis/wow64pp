@@ -19,8 +19,8 @@ auto x64_ntdll_handle = wow64pp::module_handle("ntdll.dll");
 // or wow64pp::module_handle("ntdll.dll", error_code);
 
 // equalient of GetProcAddress
-auto x64_NtQueryVirtualMemory = wow64pp::procedure_address(x64_ntdll_handle, "NtQueryVirtualMemory"); 
-// or wow64pp::procedure_address(x64_ntdll_handle, "NtQueryVirtualMemory", error_code);
+auto x64_NtQueryVirtualMemory = wow64pp::import(x64_ntdll_handle, "NtQueryVirtualMemory"); 
+// or wow64pp::import(x64_ntdll_handle, "NtQueryVirtualMemory", error_code);
 
 // after getting the function address you can call it using wow64pp::call_function by passing its address
 // as the first argument, with the function arguments following.
