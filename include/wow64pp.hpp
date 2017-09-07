@@ -712,7 +712,7 @@ namespace wow64pp
     *   \return    The address of the exported function or variable.
     *   \exception Throws std::system_error on failure.
     */
-    inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name)
+    inline std::uint64_t import(std::uint64_t hmodule, const std::string& procedure_name)
     {
         const static auto ldr_procedure_address_base = detail::ldr_procedure_address();
 
@@ -740,7 +740,7 @@ namespace wow64pp
     *   \return    The address of the exported function or variable.
     *   \exception Does not throw.
     */
-    inline std::uint64_t procedure_address(std::uint64_t hmodule, const std::string& procedure_name, std::error_code& ec)
+    inline std::uint64_t import(std::uint64_t hmodule, const std::string& procedure_name, std::error_code& ec)
     {
         const static auto ldr_procedure_address_base = detail::ldr_procedure_address(ec);
         if (ec)
