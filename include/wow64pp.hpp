@@ -18,21 +18,26 @@
 #define WOW64PP_HPP
 
 #include <system_error>
+#include <array>
 #include <memory>
 
 namespace wow64pp
 {
-#ifndef WOW64PP_CUSTOM_WINDOWS_INCLUDE
-    #define NOMINMAX
-    #include <Windows.h>
-    #include <winternl.h>
-    #undef NOMINMAX
+#ifndef WOW64PP_CUSTOM_WINDOWS_INCLUDE_FILE
+#define NOMINMAX
+#include <Windows.h>
+#include <winternl.h>
+#undef NOMINMAX
 #else
-    WOW64PP_CUSTOM_WINDOWS_INCLUDE;
+#include WOW64PP_CUSTOM_WINDOWS_INCLUDE_FILE
+
+#ifdef WOW64PP_AFTER_CUSTOM_INCLUDE
+    WOW64PP_AFTER_CUSTOM_INCLUDE
+#endif
 #endif
 
 
-    namespace definitions
+        namespace definitions
     {
         // I add only what I need to these structures
 
@@ -87,7 +92,7 @@ namespace wow64pp
 
 
         template<typename P>
-        struct UNICODE_STRING_T 
+        struct UNICODE_STRING_T
         {
             USHORT Length;
             USHORT MaximumLength;
@@ -206,32 +211,6 @@ namespace wow64pp
 
             return h;
         }
-
-
-        template<std::size_t Idx, bool OOB, typename T>
-        struct get_or_0_impl_t
-        {
-            constexpr std::uint64_t operator()(const T& tuple)
-            {
-                return std::get<Idx>(tuple);
-            }
-        };
-
-        template<std::size_t Idx, typename T>
-        struct get_or_0_impl_t<Idx, true, T>
-        {
-            constexpr std::uint64_t operator()(const T& tuple)
-            {
-                return 0;
-            }
-        };
-
-        template<std::size_t Idx, std::size_t Size, typename T>
-        decltype(auto) get_or_0(T& tuple)
-        {
-            return get_or_0_impl_t<Idx, Idx >= Size, T>{}(tuple);
-        }
-
 
         inline HMODULE native_module_handle(const char* name)
         {
@@ -368,7 +347,7 @@ namespace wow64pp
             typename std::aligned_storage<sizeof(T)
                 , std::alignment_of<T>::value>::type buffer;
             read_memory(address, &buffer, sizeof(T));
-            return static_cast<T*>(static_cast<void*>(&buffer));
+            return *static_cast<T*>(static_cast<void*>(&buffer));
         }
 
         template<typename T>
@@ -377,7 +356,7 @@ namespace wow64pp
             typename std::aligned_storage<sizeof(T)
                 , std::alignment_of<T>::value>::type buffer;
             read_memory(address, &buffer, sizeof(T), ec);
-            return static_cast<T*>(static_cast<void*>(&buffer));
+            return *static_cast<T*>(static_cast<void*>(&buffer));
         }
 
     }
@@ -466,7 +445,7 @@ namespace wow64pp
 
         if (!ec)
             ec = std::error_code(STATUS_ORDINAL_NOT_FOUND, std::system_category());
-        
+
         return 0;
     }
 
@@ -527,7 +506,7 @@ namespace wow64pp
             const std::string to_find("LdrGetProcedureAddress");
             std::string buffer = to_find;
 
-            const std::size_t n = std::min(ied.NumberOfFunctions, ied.NumberOfNames);
+            const std::size_t n = (ied.NumberOfFunctions > ied.NumberOfNames ? ied.NumberOfNames : ied.NumberOfFunctions);
             for (std::size_t i = 0; i < n; ++i) {
                 read_memory(ntdll_base + name_table[i], &buffer[0], buffer.size());
 
@@ -585,7 +564,7 @@ namespace wow64pp
     }
 
 
-        // taken from https://github.com/rwfpl/rewolf-wow64ext
+    // taken from https://github.com/rwfpl/rewolf-wow64ext
 #pragma warning(push)
 #pragma warning(disable : 4409) // illegal instruction size
     /** \brief Calls a 64 bit function from 32 bit process
@@ -595,22 +574,22 @@ namespace wow64pp
     *   \exception Does not throw.
     */
     template<typename... Args>
-    inline std::error_code call_function(std::uint64_t func, const Args&... args)
+    inline std::error_code call_function(std::uint64_t func, Args... args)
     {
-        std::uint64_t arr_args[sizeof...(args)] = { (std::uint64_t)(args)... };
+        constexpr auto argc = sizeof...(args);
+        definitions::reg64  arr_args[argc > 4 ? argc : 4]{ (std::uint64_t)(args)... };
+        for (int i = argc; i < 4; ++i)
+            arr_args[i] = definitions::reg64{ 0 };
 
-        definitions::reg64 _rcx{ detail::get_or_0<0, sizeof... (args)>(arr_args) };
-        definitions::reg64 _rdx{ detail::get_or_0<1, sizeof... (args)>(arr_args) };
-        definitions::reg64 _r8 { detail::get_or_0<2, sizeof... (args)>(arr_args) };
-        definitions::reg64 _r9 { detail::get_or_0<3, sizeof... (args)>(arr_args) };
+        definitions::reg64 _rdx{ (argc > 1 ? arr_args[1] : definitions::reg64{ 0 }) };
+        definitions::reg64 _r9{ (argc > 3 ? arr_args[3] : definitions::reg64{ 0 }) };
         definitions::reg64 _rax{ 0 };
 
-        definitions::reg64 restArgs = { (static_cast<int>(sizeof... (args)) - 4 > 0)
-            ? reinterpret_cast<std::uint64_t>(arr_args.data() + 4)
-            : 0 };
+        definitions::reg64 restArgs = { reinterpret_cast<std::uint64_t>(argc > 4 ? &arr_args[0] + 4 : 0) };
+
 
         // conversion to QWORD for easier use in inline assembly
-        definitions::reg64 _argC = { static_cast<std::uint64_t>(max(sizeof... (args) - 4, 0)) };
+        definitions::reg64 _argC = { static_cast<std::uint64_t>(argc > 4 ? argc - 4 : 0) };
         DWORD back_esp = 0;
         WORD  back_fs = 0;
 
@@ -618,8 +597,8 @@ namespace wow64pp
         {
             ;// reset FS segment, to properly handle RFG
             mov back_fs, fs
-            mov eax, 0x2B
-            mov fs, ax
+                mov eax, 0x2B
+                mov fs, ax
 
                 ;// keep original esp in back_esp variable
             mov back_esp, esp
@@ -630,19 +609,19 @@ namespace wow64pp
             ;// number of arguments above 4
             and esp, 0xFFFFFFF0
 
-            WOW64PP_EMIT(0x6A) WOW64PP_EMIT(0x33)                        /*  push   _cs             */ 
-            WOW64PP_EMIT(0xE8) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0)   /*  call   $+5             */ 
-            WOW64PP_EMIT(0x83) WOW64PP_EMIT(4) WOW64PP_EMIT(0x24) WOW64PP_EMIT(5)        /*  add    dword [esp], 5  */ 
-            WOW64PP_EMIT(0xCB)
+                WOW64PP_EMIT(0x6A) WOW64PP_EMIT(0x33)                        /*  push   _cs             */
+                WOW64PP_EMIT(0xE8) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0)   /*  call   $+5             */
+                WOW64PP_EMIT(0x83) WOW64PP_EMIT(4) WOW64PP_EMIT(0x24) WOW64PP_EMIT(5)        /*  add    dword [esp], 5  */
+                WOW64PP_EMIT(0xCB)
 
-            ;// below code is compiled as x86 inline asm, but it is executed as x64 code
+                ;// below code is compiled as x86 inline asm, but it is executed as x64 code
             ;// that's why it need sometimes WOW64PP_REX_W() macro, right column contains detailed
             ;// transcription how it will be interpreted by CPU
 
             ;// fill first four arguments
-            WOW64PP_REX_W mov ecx, _rcx.dw[0];// mov     rcx, qword ptr [_rcx]
+            WOW64PP_REX_W mov ecx, arr_args[0].dw[0];// mov     rcx, qword ptr [_rcx]
             WOW64PP_REX_W mov edx, _rdx.dw[0];// mov     rdx, qword ptr [_rdx]
-            push _r8.v;// push    qword ptr [_r8]
+            push arr_args[2].v;// push    qword ptr [_r8]
             WOW64PP_X64_POP(8); ;// pop     r8
             push _r9.v;// push    qword ptr [_r9]
             WOW64PP_X64_POP(9); ;// pop     r9
@@ -684,15 +663,15 @@ namespace wow64pp
             ;// 
             pop edi;// pop     rdi
             ;// 
-                // set return value                             ;// 
+             // set return value                             ;// 
             WOW64PP_REX_W mov _rax.dw[0], eax;// mov     qword ptr [_rax], rax
 
-            WOW64PP_EMIT(0xE8) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0)                                  /*  call   $+5                   */ 
-            WOW64PP_EMIT(0xC7) WOW64PP_EMIT(0x44) WOW64PP_EMIT(0x24) WOW64PP_EMIT(4) WOW64PP_EMIT(0x23) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) /*  mov    dword [rsp + 4], _cs  */ 
-            WOW64PP_EMIT(0x83) WOW64PP_EMIT(4) WOW64PP_EMIT(0x24) WOW64PP_EMIT(0xD)                                     /*  add    dword [rsp], 0xD      */ 
-            WOW64PP_EMIT(0xCB)                                                                  /*  retf                         */ 
+            WOW64PP_EMIT(0xE8) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0)                                  /*  call   $+5                   */
+                WOW64PP_EMIT(0xC7) WOW64PP_EMIT(0x44) WOW64PP_EMIT(0x24) WOW64PP_EMIT(4) WOW64PP_EMIT(0x23) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) /*  mov    dword [rsp + 4], _cs  */
+                WOW64PP_EMIT(0x83) WOW64PP_EMIT(4) WOW64PP_EMIT(0x24) WOW64PP_EMIT(0xD)                                     /*  add    dword [rsp], 0xD      */
+                WOW64PP_EMIT(0xCB)                                                                  /*  retf                         */
 
-            mov ax, ds
+                mov ax, ds
                 mov ss, ax
                 mov esp, back_esp
 
@@ -753,10 +732,10 @@ namespace wow64pp
 
         std::uint64_t ret;
         ec = call_function(ldr_procedure_address_base
-                            , hmodule
-                            , reinterpret_cast<std::uint64_t>(&unicode_fun_name)
-                            , static_cast<std::uint64_t>(0)
-                            , reinterpret_cast<std::uint64_t>(&ret));
+                           , hmodule
+                           , reinterpret_cast<std::uint64_t>(&unicode_fun_name)
+                           , static_cast<std::uint64_t>(0)
+                           , reinterpret_cast<std::uint64_t>(&ret));
 
         return ret;
     }
