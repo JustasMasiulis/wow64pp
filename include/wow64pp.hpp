@@ -17,29 +17,26 @@
 #ifndef WOW64PP_HPP
 #define WOW64PP_HPP
 
-#include <system_error>
-#include <array>
 #include <memory>
+#include <system_error>
 
-namespace wow64pp
-{
+namespace wow64pp {
+
 #ifndef WOW64PP_CUSTOM_WINDOWS_INCLUDE_FILE
-#define NOMINMAX
-#include <Windows.h>
-#include <winternl.h>
-#undef NOMINMAX
+    #define NOMINMAX
+    #include <Windows.h>
+    #include <winternl.h>
+    #undef NOMINMAX
 #else
-#include WOW64PP_CUSTOM_WINDOWS_INCLUDE_FILE
+    #include WOW64PP_CUSTOM_WINDOWS_INCLUDE_FILE
 
-#ifdef WOW64PP_AFTER_CUSTOM_INCLUDE
-    WOW64PP_AFTER_CUSTOM_INCLUDE
+    #ifdef WOW64PP_AFTER_CUSTOM_INCLUDE
+        WOW64PP_AFTER_CUSTOM_INCLUDE
+    #endif
 #endif
-#endif
 
 
-        namespace definitions
-    {
-        // I add only what I need to these structures
+    namespace definitions {
 
         template<typename P>
         struct PROCESS_BASIC_INFORMATION_T
@@ -158,12 +155,12 @@ namespace wow64pp
     }
 
 
-    namespace detail
-    {
+    namespace detail {
 
         inline std::error_code get_last_error() noexcept
         {
-            return std::error_code(static_cast<int>(GetLastError()), std::system_category());
+            return std::error_code(static_cast<int>(GetLastError())
+                                   , std::system_category());
         }
 
 
@@ -450,8 +447,7 @@ namespace wow64pp
     }
 
 
-    namespace detail
-    {
+    namespace detail {
 
         inline IMAGE_EXPORT_DIRECTORY image_export_dir(std::uint64_t ntdll_base)
         {
@@ -663,21 +659,21 @@ namespace wow64pp
             ;// 
             pop edi;// pop     rdi
             ;// 
-             // set return value                             ;// 
+            ; // set return value                             ;// 
             WOW64PP_REX_W mov _rax.dw[0], eax;// mov     qword ptr [_rax], rax
 
             WOW64PP_EMIT(0xE8) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0)                                  /*  call   $+5                   */
-                WOW64PP_EMIT(0xC7) WOW64PP_EMIT(0x44) WOW64PP_EMIT(0x24) WOW64PP_EMIT(4) WOW64PP_EMIT(0x23) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) /*  mov    dword [rsp + 4], _cs  */
-                WOW64PP_EMIT(0x83) WOW64PP_EMIT(4) WOW64PP_EMIT(0x24) WOW64PP_EMIT(0xD)                                     /*  add    dword [rsp], 0xD      */
-                WOW64PP_EMIT(0xCB)                                                                  /*  retf                         */
+            WOW64PP_EMIT(0xC7) WOW64PP_EMIT(0x44) WOW64PP_EMIT(0x24) WOW64PP_EMIT(4) WOW64PP_EMIT(0x23) WOW64PP_EMIT(0) WOW64PP_EMIT(0) WOW64PP_EMIT(0) /*  mov    dword [rsp + 4], _cs  */
+            WOW64PP_EMIT(0x83) WOW64PP_EMIT(4) WOW64PP_EMIT(0x24) WOW64PP_EMIT(0xD)                                     /*  add    dword [rsp], 0xD      */
+            WOW64PP_EMIT(0xCB)                                                                  /*  retf                         */
 
-                mov ax, ds
-                mov ss, ax
-                mov esp, back_esp
+            mov ax, ds
+            mov ss, ax
+            mov esp, back_esp
 
                 ;// restore FS segment
             mov ax, back_fs
-                mov fs, ax
+            mov fs, ax
         }
 
         return (_rax.v != 0 ? std::error_code(static_cast<int>(_rax.v), std::system_category()) : std::error_code{});
