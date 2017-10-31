@@ -18,11 +18,8 @@
 #define WOW64PP_HPP
 
 #include <system_error>
-#include <array>
 #include <memory>
 #include <cstring> // memcpy
-#define NOMINMAX
-#include <Windows.h>
 
 namespace wow64pp {
 
@@ -110,7 +107,96 @@ namespace wow64pp {
         using NtWow64ReadVirtualMemory64T = long(__stdcall*)(void* ProcessHandle, unsigned __int64 BaseAddress
                                                                  , void* Buffer, unsigned __int64 Size
                                                                  , unsigned __int64* NumberOfBytesRead);
+        struct IMAGE_EXPORT_DIRECTORY {
+            unsigned long   Characteristics;
+            unsigned long   TimeDateStamp;
+            unsigned short  MajorVersion;
+            unsigned short  MinorVersion;
+            unsigned long   Name;
+            unsigned long   Base;
+            unsigned long   NumberOfFunctions;
+            unsigned long   NumberOfNames;
+            unsigned long   AddressOfFunctions;     // RVA from base of image
+            unsigned long   AddressOfNames;         // RVA from base of image
+            unsigned long   AddressOfNameOrdinals;  // RVA from base of image
+        };
 
+        struct IMAGE_DOS_HEADER {      // DOS .EXE header
+            unsigned short   e_magic;                     // Magic number
+            unsigned short   e_cblp;                      // Bytes on last page of file
+            unsigned short   e_cp;                        // Pages in file
+            unsigned short   e_crlc;                      // Relocations
+            unsigned short   e_cparhdr;                   // Size of header in paragraphs
+            unsigned short   e_minalloc;                  // Minimum extra paragraphs needed
+            unsigned short   e_maxalloc;                  // Maximum extra paragraphs needed
+            unsigned short   e_ss;                        // Initial (relative) SS value
+            unsigned short   e_sp;                        // Initial SP value
+            unsigned short   e_csum;                      // Checksum
+            unsigned short   e_ip;                        // Initial IP value
+            unsigned short   e_cs;                        // Initial (relative) CS value
+            unsigned short   e_lfarlc;                    // File address of relocation table
+            unsigned short   e_ovno;                      // Overlay number
+            unsigned short   e_res[4];                    // Reserved words
+            unsigned short   e_oemid;                     // OEM identifier (for e_oeminfo)
+            unsigned short   e_oeminfo;                   // OEM information; e_oemid specific
+            unsigned short   e_res2[10];                  // Reserved words
+            long             e_lfanew;                    // File address of new exe header
+        };
+
+        struct IMAGE_FILE_HEADER {
+            unsigned short    Machine;
+            unsigned short    NumberOfSections;
+            unsigned long     TimeDateStamp;
+            unsigned long     PointerToSymbolTable;
+            unsigned long     NumberOfSymbols;
+            unsigned short    SizeOfOptionalHeader;
+            unsigned short    Characteristics;
+        };
+
+        struct IMAGE_DATA_DIRECTORY {
+            unsigned long   VirtualAddress;
+            unsigned long   Size;
+        };
+
+        struct IMAGE_OPTIONAL_HEADER64 {
+            constexpr static std::size_t image_num_dir_entries = 16;
+            unsigned short        Magic;
+            unsigned char        MajorLinkerVersion;
+            unsigned char        MinorLinkerVersion;
+            unsigned long       SizeOfCode;
+            unsigned long       SizeOfInitializedData;
+            unsigned long       SizeOfUninitializedData;
+            unsigned long       AddressOfEntryPoint;
+            unsigned long       BaseOfCode;
+            std::uint64_t   ImageBase;
+            unsigned long       SectionAlignment;
+            unsigned long       FileAlignment;
+            unsigned short        MajorOperatingSystemVersion;
+            unsigned short        MinorOperatingSystemVersion;
+            unsigned short        MajorImageVersion;
+            unsigned short        MinorImageVersion;
+            unsigned short        MajorSubsystemVersion;
+            unsigned short        MinorSubsystemVersion;
+            unsigned long       Win32VersionValue;
+            unsigned long       SizeOfImage;
+            unsigned long       SizeOfHeaders;
+            unsigned long       CheckSum;
+            unsigned short        Subsystem;
+            unsigned short        DllCharacteristics;
+            std::uint64_t   SizeOfStackReserve;
+            std::uint64_t   SizeOfStackCommit;
+            std::uint64_t   SizeOfHeapReserve;
+            std::uint64_t   SizeOfHeapCommit;
+            unsigned long       LoaderFlags;
+            unsigned long       NumberOfRvaAndSizes;
+            IMAGE_DATA_DIRECTORY DataDirectory[image_num_dir_entries];
+        };
+
+        typedef struct _IMAGE_NT_HEADERS64 {
+            unsigned long Signature;
+            IMAGE_FILE_HEADER FileHeader;
+            IMAGE_OPTIONAL_HEADER64 OptionalHeader;
+        } IMAGE_NT_HEADERS64, *PIMAGE_NT_HEADERS64;
     }
 
 
@@ -118,6 +204,31 @@ namespace wow64pp {
 
         constexpr static auto image_directory_entry_export = 0;
         constexpr static auto ordinal_not_found = 0xC0000138;
+
+#define DECLARE_HANDLE(name) struct name##__{int unused;}; typedef struct name##__ *name
+        DECLARE_HANDLE(HMODULE);
+
+        typedef int (__stdcall *FARPROC)();
+
+        extern "C" {
+
+            __declspec(dllimport) unsigned long __stdcall GetLastError();
+
+            __declspec(dllimport) void* __stdcall GetCurrentProcess();
+
+            __declspec(dllimport) int __stdcall DuplicateHandle(
+                void* hSourceProcessHandle,
+                void* hSourceHandle,
+                void* hTargetProcessHandle,
+                void** lpTargetHandle,
+                unsigned long dwDesiredAccess,
+                int bInheritHandle,
+                unsigned long dwOptions);
+
+           __declspec(dllimport) HMODULE __stdcall GetModuleHandleA(const char* lpModuleName);
+
+           __declspec(dllimport) FARPROC __stdcall GetProcAddress(HMODULE hModule, const char* lpProcName);
+        }
 
 
         inline std::error_code get_last_error() noexcept
@@ -193,7 +304,7 @@ namespace wow64pp {
         inline F native_ntdll_function(const char* name)
         {
             const static auto ntdll_addr = native_module_handle("ntdll.dll");
-            auto              f          = reinterpret_cast<F>(GetProcAddress(ntdll_addr, name));
+            auto              f          = reinterpret_cast<F>(detail::GetProcAddress(ntdll_addr, name));
 
             if (f == nullptr)
                 throw_last_error("failed to get address of ntdll function");
@@ -208,7 +319,7 @@ namespace wow64pp {
             if (ec)
                 return nullptr;
 
-            const auto f = reinterpret_cast<F>(GetProcAddress(ntdll_addr, name));
+            const auto f = reinterpret_cast<F>(detail::GetProcAddress(ntdll_addr, name));
 
             if (f == nullptr)
                 ec = detail::get_last_error();
@@ -408,26 +519,26 @@ namespace wow64pp {
 
     namespace detail {
 
-        inline IMAGE_EXPORT_DIRECTORY image_export_dir(std::uint64_t ntdll_base)
+        inline definitions::IMAGE_EXPORT_DIRECTORY image_export_dir(std::uint64_t ntdll_base)
         {
-            const auto e_lfanew = read_memory<IMAGE_DOS_HEADER>(ntdll_base).e_lfanew;
+            const auto e_lfanew = read_memory<definitions::IMAGE_DOS_HEADER>(ntdll_base).e_lfanew;
 
-            const auto idd_virtual_addr = read_memory<IMAGE_NT_HEADERS64>(ntdll_base + e_lfanew).OptionalHeader
+            const auto idd_virtual_addr = read_memory<definitions::IMAGE_NT_HEADERS64>(ntdll_base + e_lfanew).OptionalHeader
                     .DataDirectory[image_directory_entry_export].VirtualAddress;
 
             if (idd_virtual_addr == 0)
                 throw std::runtime_error("IMAGE_EXPORT_DIRECTORY::VirtualAddress was 0");
 
-            return read_memory<IMAGE_EXPORT_DIRECTORY>(ntdll_base + idd_virtual_addr);
+            return read_memory<definitions::IMAGE_EXPORT_DIRECTORY>(ntdll_base + idd_virtual_addr);
         }
 
-        inline IMAGE_EXPORT_DIRECTORY image_export_dir(std::uint64_t ntdll_base, std::error_code& ec) noexcept
+        inline definitions::IMAGE_EXPORT_DIRECTORY image_export_dir(std::uint64_t ntdll_base, std::error_code& ec) noexcept
         {
-            const auto e_lfanew = read_memory<IMAGE_DOS_HEADER>(ntdll_base, ec).e_lfanew;
+            const auto e_lfanew = read_memory<definitions::IMAGE_DOS_HEADER>(ntdll_base, ec).e_lfanew;
             if (ec)
                 return {};
 
-            const auto idd_virtual_addr = read_memory<IMAGE_NT_HEADERS64>(ntdll_base + e_lfanew, ec).OptionalHeader
+            const auto idd_virtual_addr = read_memory<definitions::IMAGE_NT_HEADERS64>(ntdll_base + e_lfanew, ec).OptionalHeader
                     .DataDirectory[image_directory_entry_export].VirtualAddress;
             if (ec)
                 return {};
@@ -437,7 +548,7 @@ namespace wow64pp {
                 return {};
             }
 
-            return read_memory<IMAGE_EXPORT_DIRECTORY>(ntdll_base + idd_virtual_addr, ec);
+            return read_memory<definitions::IMAGE_EXPORT_DIRECTORY>(ntdll_base + idd_virtual_addr, ec);
         }
 
 
@@ -508,7 +619,10 @@ namespace wow64pp {
             std::string       buffer;
             buffer.resize(to_find.size());
 
-            const std::size_t n = std::min(ied.NumberOfFunctions, ied.NumberOfNames);
+            const std::size_t n = ied.NumberOfFunctions > ied.NumberOfNames
+                ? ied.NumberOfNames
+                : ied.NumberOfFunctions;
+
             for (std::size_t  i = 0; i < n; ++i) {
                 read_memory(ntdll_base + name_table[i], &buffer[0], buffer.size(), ec);
                 if (ec)
@@ -589,11 +703,12 @@ namespace wow64pp {
         };
 
         static void *allocated_shellcode = nullptr;
-        if (!allocated_shellcode) {
-            allocated_shellcode = VirtualAlloc(nullptr, sizeof(shellcode), MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+        if (!allocated_shellcode) { //                                     MEM_COMMIT   MEM_RESERVE PAGE_EXECUTE_READWRITE
+            allocated_shellcode = VirtualAlloc(nullptr, sizeof(shellcode), 0x00001000 | 0x00002000, 0x40);
             memcpy(allocated_shellcode, shellcode, sizeof(shellcode));
         }
 
+    
         using my_fn_sig = void(__cdecl*)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint32_t);
 
         std::uint32_t ret;

@@ -32,3 +32,5 @@
 *.app
 /.vs/wow64pp/v15
 /.vs
+/.idea
+/cmake-build-debug
