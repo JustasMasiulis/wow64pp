@@ -205,8 +205,7 @@ namespace wow64pp {
         constexpr static auto image_directory_entry_export = 0;
         constexpr static auto ordinal_not_found = 0xC0000138;
 
-#define DECLARE_HANDLE(name) struct name##__{int unused;}; typedef struct name##__ *name
-        DECLARE_HANDLE(HMODULE);
+        struct HMODULE__ { int unused; }; typedef struct HMODULE__ *HMODULE;
 
         typedef int (__stdcall *FARPROC)();
 
