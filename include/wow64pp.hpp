@@ -205,8 +205,6 @@ namespace wow64pp {
         constexpr static auto image_directory_entry_export = 0;
         constexpr static auto ordinal_not_found = 0xC0000138;
 
-        struct HMODULE__ { int unused; }; typedef struct HMODULE__ *HMODULE;
-
         typedef int (__stdcall *FARPROC)();
 
         extern "C" {
@@ -224,9 +222,9 @@ namespace wow64pp {
                 int bInheritHandle,
                 unsigned long dwOptions);
 
-           __declspec(dllimport) HMODULE __stdcall GetModuleHandleA(const char* lpModuleName);
+           __declspec(dllimport) void* __stdcall GetModuleHandleA(const char* lpModuleName);
 
-           __declspec(dllimport) FARPROC __stdcall GetProcAddress(HMODULE hModule, const char* lpProcName);
+           __declspec(dllimport) FARPROC __stdcall GetProcAddress(void* hModule, const char* lpProcName);
         }
 
 
@@ -280,7 +278,7 @@ namespace wow64pp {
             return h;
         }
 
-        inline HMODULE native_module_handle(const char* name)
+        inline void* native_module_handle(const char* name)
         {
             const auto addr = GetModuleHandleA(name);
             if (addr == nullptr)
@@ -289,7 +287,7 @@ namespace wow64pp {
             return addr;
         }
 
-        inline HMODULE native_module_handle(const char* name, std::error_code& ec) noexcept
+        inline void* native_module_handle(const char* name, std::error_code& ec) noexcept
         {
             const auto addr = GetModuleHandleA(name);
             if (addr == nullptr)
