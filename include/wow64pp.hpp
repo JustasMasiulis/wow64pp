@@ -699,22 +699,27 @@ namespace wow64pp {
                 0xC3        // ret
         };
 
-        static void *allocated_shellcode = nullptr;
-        if (!allocated_shellcode) { //                                     MEM_COMMIT   MEM_RESERVE PAGE_EXECUTE_READWRITE
-            allocated_shellcode = VirtualAlloc(nullptr, sizeof(shellcode), 0x00001000 | 0x00002000, 0x40);
-            memcpy(allocated_shellcode, shellcode, sizeof(shellcode));
-        }
+        static void *allocated_shellcode = [] {
+            //                                                  MEM_COMMIT   MEM_RESERVE PAGE_EXECUTE_READWRITE
+            auto mem = VirtualAlloc(nullptr, sizeof(shellcode), 0x00001000 | 0x00002000, 0x40);
+            if (!mem)
+                detail::throw_last_error("VirtualAlloc failed to allocate memory for call_function shellcode");
 
-    
-        using my_fn_sig = void(__cdecl*)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint32_t);
+            std::memcpy(mem, shellcode, sizeof(shellcode));
+            return mem;
+        }();
+ 
+        using my_fn_sig = void(__cdecl*)(std::uint64_t, std::uint64_t, std::uint64_t
+                                         , std::uint64_t, std::uint64_t, std::uint64_t
+                                         , std::uint64_t, std::uint32_t);
 
         std::uint32_t ret;
-        ((my_fn_sig)(allocated_shellcode))(func
+        reinterpret_cast<my_fn_sig>(allocated_shellcode)(func
                                            , arr_args[0]
                                            , arr_args[1]
                                            , arr_args[2]
                                            , arr_args[3]
-                                           , sizeof...(Args) > 4 ? sizeof...(Args)-4 : 0
+                                           , sizeof...(Args) > 4 ? (sizeof...(Args) - 4) : 0
                                            , reinterpret_cast<std::uint64_t>(arr_args + 4)
                                            , reinterpret_cast<std::uint32_t>(&ret));
 
