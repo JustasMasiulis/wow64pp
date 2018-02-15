@@ -205,7 +205,6 @@ namespace wow64pp {
             __stdcall GetProcAddress(void* hModule, const char* lpProcName);
         }
 
-
         inline std::error_code get_last_error() noexcept
         {
             return std::error_code(static_cast<int>(GetLastError()),
