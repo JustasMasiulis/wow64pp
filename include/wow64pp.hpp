@@ -529,7 +529,6 @@ namespace wow64pp {
         return 0;
     }
 
-
     namespace detail {
 
         inline defs::IMAGE_EXPORT_DIRECTORY

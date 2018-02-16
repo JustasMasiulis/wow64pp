@@ -1,11 +1,5 @@
 # wow64pp
-Easy to use utility for 32bit applications running in wow64 subsystem that need to interact with other 64bit processes.
-
-The heart of the library ( call_function ) is based on [wow64ext](https://github.com/rwfpl/rewolf-wow64ext) X64Call.
-
-## Installation
-
-The library is a single header so all you need to do is copy it to your directory and include it.
+An easy to use header only heavens gate implementation based on [wow64ext](https://github.com/rwfpl/rewolf-wow64ext) X64Call however not using inline assembly allowing it to work on other compilers like MinGW.
 
 ## Quick reference
 Wow64pp only exposes 3 functions 2 of which have exception based and error_code based counterparts.
