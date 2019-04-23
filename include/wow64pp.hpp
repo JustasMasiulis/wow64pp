@@ -747,14 +747,16 @@ namespace wow64pp {
         static void* allocated_shellcode = nullptr;
 
         // MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE
-        allocated_shellcode =
-            VirtualAlloc(nullptr, sizeof(shellcode), 0x00001000 | 0x00002000, 0x40);
+        if (!allocated_shellcode) {
+            allocated_shellcode =
+                VirtualAlloc(nullptr, sizeof(shellcode), 0x00001000 | 0x00002000, 0x40);
 
-        if (!allocated_shellcode)
-            detail::throw_last_error(
-                "VirtualAlloc failed to allocate memory for call_function shellcode");
+            if (!allocated_shellcode)
+                detail::throw_last_error(
+                    "VirtualAlloc failed to allocate memory for call_function shellcode");
 
-        std::memcpy(allocated_shellcode, shellcode, sizeof(shellcode));
+            std::memcpy(allocated_shellcode, shellcode, sizeof(shellcode));
+        }
 
         using my_fn_sig = void(__cdecl*)(std::uint64_t,
                                          std::uint64_t,
