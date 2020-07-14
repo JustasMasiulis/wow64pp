@@ -8,11 +8,11 @@ Wow64pp only exposes 3 functions 2 of which have exception based and error_code 
 #include "wow64pp.hpp"
 // ...
 
-// equalient of GetModuleHandle
+// equivalent of GetModuleHandle
 auto x64_ntdll_handle = wow64pp::module_handle("ntdll.dll"); 
 // or wow64pp::module_handle("ntdll.dll", error_code);
 
-// equalient of GetProcAddress
+// equivalent of GetProcAddress
 auto x64_NtQueryVirtualMemory = wow64pp::import(x64_ntdll_handle, "NtQueryVirtualMemory"); 
 // or wow64pp::import(x64_ntdll_handle, "NtQueryVirtualMemory", error_code);
 
