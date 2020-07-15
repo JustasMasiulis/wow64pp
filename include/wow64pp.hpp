@@ -686,7 +686,7 @@ namespace wow64pp {
     template<class... Args>
     inline std::uint64_t call_function(std::uint64_t func, Args... args)
     {
-        std::uint64_t arr_args[] = { (std::uint64_t)(args)... };
+        std::uint64_t arr_args[4] = { (std::uint64_t)(args)... };
 
         // clang-format off
         constexpr static std::uint8_t shellcode[] = {
